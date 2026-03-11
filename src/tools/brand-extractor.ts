@@ -2,6 +2,8 @@ import * as cheerio from "cheerio";
 import { generate } from "../llm/index.js";
 import type { BrandIdentity, ToolResult } from "../types/index.js";
 import { fetchWithRetry } from "./http-utils.js";
+import { searchGoogle } from "./web-search.js";
+import { scrapeCompetitorWebsite } from "./web-scraper.js";
 
 // Auto-confirm flag for web mode (no terminal available)
 let autoConfirm = false;
@@ -45,7 +47,127 @@ function extractMetadata(html: string, url: string) {
   return { title, description, ogTitle, ogDescription, ogImage, bodyText, styleContent, logos };
 }
 
+// ─── Fallback: Use web search + scraper when direct fetch fails (403, etc.) ───
+async function extractBrandViaWebSearch(url: string): Promise<ToolResult> {
+  console.log(`  [Brand] Direct fetch failed, using web search fallback for ${url}...`);
+
+  const domain = new URL(url).hostname.replace("www.", "");
+  const companyGuess = domain.replace(/\.(com|net|org|io|co|us|mx|es|ar).*$/i, "").replace(/[-_]/g, " ");
+
+  // Search for info about this company
+  let searchContext = "";
+  try {
+    const results = await searchGoogle(`"${domain}" company services about`, 5);
+    if (results.length > 0) {
+      searchContext = results.map((r) => `- ${r.title}: ${r.snippet}`).join("\n");
+      console.log(`  [Brand] Found ${results.length} web results about ${domain}`);
+    }
+  } catch (err) {
+    console.log(`  [Brand] Web search failed: ${(err as Error).message?.slice(0, 50)}`);
+  }
+
+  // Also try to scrape the site with our scraper (which may use different headers)
+  let scraperContext = "";
+  try {
+    const scraped = await scrapeCompetitorWebsite(url);
+    if (scraped.title || scraped.description) {
+      scraperContext = `
+Site title: ${scraped.title}
+Site description: ${scraped.description}
+Services detected: ${scraped.services.join(", ") || "none"}
+Body text: ${scraped.bodyText.slice(0, 2000)}`;
+      console.log(`  [Brand] Scraper extracted data from ${domain}`);
+    }
+  } catch {
+    console.log(`  [Brand] Scraper also failed, relying on web search data only`);
+  }
+
+  const prompt = `Analyze this company/website and create a brand identity profile.
+Use the web search results and any scraped data to determine the brand identity.
+
+Website URL: ${url}
+Domain: ${domain}
+${scraperContext ? `\nSCRAPED DATA:${scraperContext}` : ""}
+${searchContext ? `\nWEB SEARCH RESULTS:\n${searchContext}` : ""}
+
+Based on ALL available information, return ONLY valid JSON:
+{
+  "companyName": "company name (from domain '${companyGuess}' or search results)",
+  "industry": "industry/sector",
+  "description": "what the company does in 2-3 detailed sentences",
+  "location": "city, state/country if determinable",
+  "colors": {
+    "primary": "#hex suggestion based on industry",
+    "secondary": "#hex suggestion",
+    "accent": "#hex suggestion"
+  },
+  "fonts": {
+    "heading": "suggested professional font",
+    "body": "suggested professional font"
+  },
+  "logo": "",
+  "website": "${url}",
+  "confidence": "medium"
+}`;
+
+  const response = await generate(
+    prompt,
+    "You are a brand identity analyst. When you cannot directly view a site, use available data (search results, domain name, scraped snippets) to infer the brand identity. Return ONLY valid JSON, no markdown."
+  );
+
+  let brandData: Record<string, unknown>;
+  try {
+    const jsonMatch = response.text.match(/\{[\s\S]*\}/);
+    brandData = JSON.parse(jsonMatch?.[0] ?? response.text);
+  } catch {
+    return { success: false, error: "Failed to parse brand identity from AI response" };
+  }
+
+  const identity: BrandIdentity = {
+    companyName: (brandData.companyName as string) || companyGuess,
+    industry: (brandData.industry as string) || "Unknown",
+    description: (brandData.description as string) || "",
+    colors: (brandData.colors as BrandIdentity["colors"]) || { primary: "#1A1A2E", secondary: "#16213E", accent: "#E94560" },
+    fonts: (brandData.fonts as BrandIdentity["fonts"]) || { heading: "Montserrat", body: "Open Sans" },
+    logo: brandData.logo as string | undefined,
+    website: url,
+    location: (brandData.location as string) || undefined,
+    confirmed: false,
+  };
+
+  console.log(`  [Brand] Detected via web search: ${identity.companyName} (${identity.industry})`);
+  console.log(`  [Brand] Location: ${identity.location || "unknown"}`);
+
+  // Auto-confirm or ask user
+  const userConfirm = await askUserOrAutoConfirm(
+    `Marca detectada via busqueda web: ${identity.companyName} (${identity.industry}).\n` +
+    "Confirma estos datos o corrigelos (escribe 'ok' o los datos correctos):"
+  );
+
+  if (userConfirm.toLowerCase() !== "ok") {
+    const nameMatch = userConfirm.match(/nombre:\s*([^|]+)/i);
+    const colorMatch = userConfirm.match(/colores?:\s*([^|]+)/i);
+    const fontMatch = userConfirm.match(/fuentes?:\s*(.+)/i);
+    if (nameMatch) identity.companyName = nameMatch[1].trim();
+    if (colorMatch) {
+      const colors = colorMatch[1].split(",").map((c) => c.trim());
+      if (colors[0]) identity.colors.primary = colors[0];
+      if (colors[1]) identity.colors.secondary = colors[1];
+      if (colors[2]) identity.colors.accent = colors[2];
+    }
+    if (fontMatch) {
+      const fonts = fontMatch[1].split(",").map((f) => f.trim());
+      if (fonts[0]) identity.fonts.heading = fonts[0];
+      if (fonts[1]) identity.fonts.body = fonts[1];
+    }
+  }
+  identity.confirmed = true;
+
+  return { success: true, data: identity };
+}
+
 export async function extractBrandFromUrl(url: string): Promise<ToolResult> {
+  // First try direct HTML fetch
   try {
     console.log(`\n  Fetching ${url}...`);
     const html = await fetchPage(url);
@@ -67,6 +189,7 @@ Extract and return this JSON structure:
   "companyName": "extracted company name",
   "industry": "industry/sector",
   "description": "what the company does in 2-3 sentences",
+  "location": "city, state/country if found in site content",
   "colors": {
     "primary": "#hex or 'unknown'",
     "secondary": "#hex or 'unknown'",
@@ -100,6 +223,7 @@ Extract and return this JSON structure:
       fonts: (brandData.fonts as BrandIdentity["fonts"]) || { heading: "unknown", body: "unknown" },
       logo: brandData.logo as string | undefined,
       website: url,
+      location: (brandData.location as string) || undefined,
       confirmed: false,
     };
 
@@ -136,7 +260,13 @@ Extract and return this JSON structure:
 
     return { success: true, data: identity };
   } catch (err) {
-    return { success: false, error: `Brand extraction failed: ${(err as Error).message}` };
+    // ─── FALLBACK: If direct fetch fails (403, timeout, etc.), use web search ───
+    console.log(`  [Brand] Direct fetch error: ${(err as Error).message?.slice(0, 60)}`);
+    try {
+      return await extractBrandViaWebSearch(url);
+    } catch (fallbackErr) {
+      return { success: false, error: `Brand extraction failed: ${(err as Error).message}. Fallback also failed: ${(fallbackErr as Error).message}` };
+    }
   }
 }
 
