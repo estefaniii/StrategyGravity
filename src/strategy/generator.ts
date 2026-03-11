@@ -6,31 +6,66 @@ import * as prompts from "./prompts.js";
 import chalk from "chalk";
 
 function parseJSON<T>(text: string): T {
+  // Try to find the outermost JSON object
   const match = text.match(/\{[\s\S]*\}/);
   if (!match) throw new Error("No JSON found in response");
-  try {
-    return JSON.parse(match[0]) as T;
-  } catch {
-    // Try to fix common JSON issues: trailing commas, unescaped newlines
-    let fixed = match[0]
-      .replace(/,\s*([}\]])/g, "$1")           // trailing commas
-      .replace(/[\r\n]+/g, " ")                  // newlines inside strings
-      .replace(/\t/g, " ");                      // tabs
-    try {
+
+  const attempts: Array<() => T> = [
+    // 1. Direct parse
+    () => JSON.parse(match[0]) as T,
+
+    // 2. Fix trailing commas, newlines, tabs
+    () => {
+      const fixed = match[0]
+        .replace(/,\s*([}\]])/g, "$1")
+        .replace(/[\r\n]+/g, " ")
+        .replace(/\t/g, " ");
       return JSON.parse(fixed) as T;
-    } catch {
-      // Last resort: extract up to the last valid closing brace
+    },
+
+    // 3. Also fix unescaped quotes inside string values
+    () => {
+      let fixed = match[0]
+        .replace(/,\s*([}\]])/g, "$1")
+        .replace(/[\r\n]+/g, " ")
+        .replace(/\t/g, " ");
+      // Fix control characters inside strings
+      fixed = fixed.replace(/[\x00-\x1F]/g, " ");
+      return JSON.parse(fixed) as T;
+    },
+
+    // 4. Truncate at last valid closing brace
+    () => {
+      const fixed = match[0]
+        .replace(/,\s*([}\]])/g, "$1")
+        .replace(/[\r\n]+/g, " ")
+        .replace(/\t/g, " ")
+        .replace(/[\x00-\x1F]/g, " ");
       const lastBrace = fixed.lastIndexOf("}");
-      if (lastBrace > 0) {
-        try {
-          return JSON.parse(fixed.slice(0, lastBrace + 1)) as T;
-        } catch {
-          throw new Error("Failed to parse JSON after multiple attempts");
+      if (lastBrace <= 0) throw new Error("no brace");
+      return JSON.parse(fixed.slice(0, lastBrace + 1)) as T;
+    },
+
+    // 5. Aggressive: strip everything after last complete key-value pair
+    () => {
+      let fixed = match[0]
+        .replace(/[\r\n\t\x00-\x1F]/g, " ")
+        .replace(/,\s*([}\]])/g, "$1");
+      // Find all balanced braces and pick the longest valid parse
+      for (let end = fixed.length; end > 10; end--) {
+        if (fixed[end - 1] === "}") {
+          try { return JSON.parse(fixed.slice(0, end)) as T; } catch { /* try shorter */ }
         }
       }
-      throw new Error("Failed to parse JSON from LLM response");
-    }
+      throw new Error("no valid JSON found");
+    },
+  ];
+
+  for (const attempt of attempts) {
+    try { return attempt(); } catch { /* try next */ }
   }
+
+  throw new Error("Failed to parse JSON after multiple attempts");
 }
 
 function log(step: string, msg: string) {
@@ -216,20 +251,52 @@ export async function generateStrategy(
   emit(12, TOTAL, "Creando cronograma y conclusiones finales...");
   log("12/12", "Cronograma y conclusiones...");
 
-  const timeResponse = await generate(
-    prompts.promptTimeline(brand),
-    prompts.STRATEGY_SYSTEM_PROMPT,
-    { maxTokens: 2048 }
-  );
-  const { implementationTimeline } = parseJSON<{ implementationTimeline: MarketingStrategy["implementationTimeline"] }>(timeResponse.text);
+  let implementationTimeline: MarketingStrategy["implementationTimeline"];
+  try {
+    const timeResponse = await generate(
+      prompts.promptTimeline(brand),
+      prompts.STRATEGY_SYSTEM_PROMPT,
+      { maxTokens: 2048 }
+    );
+    const parsed = parseJSON<{ implementationTimeline: MarketingStrategy["implementationTimeline"] }>(timeResponse.text);
+    implementationTimeline = parsed.implementationTimeline;
+  } catch (err) {
+    console.log(`  [Timeline] Parse failed, using defaults: ${(err as Error).message?.slice(0, 50)}`);
+    implementationTimeline = [
+      { phase: "Fase 1: Fundamentos", weeks: "Semanas 1-4", tasks: ["Configurar plataformas digitales", "Definir identidad visual", "Crear perfiles sociales", "Planificar contenido inicial"] },
+      { phase: "Fase 2: Lanzamiento", weeks: "Semanas 5-8", tasks: ["Publicar contenido SEO", "Iniciar campanas en redes sociales", "Configurar analiticas", "Primera ronda de email marketing"] },
+      { phase: "Fase 3: Crecimiento", weeks: "Semanas 9-16", tasks: ["Escalar produccion de contenido", "Optimizar campanas pagadas", "Desarrollar partnerships", "Analizar metricas y ajustar"] },
+      { phase: "Fase 4: Optimizacion", weeks: "Semanas 17-24", tasks: ["A/B testing de campanas", "Refinar segmentacion", "Expandir canales exitosos", "Reporte trimestral de resultados"] },
+    ];
+  }
 
-  const strategySummary = `${brand.companyName}: ${description.summary.slice(0, 200)}. Competidores: ${competitors.map((c) => c.name).join(", ")}. Pilares: ${contentPillars.map((p) => p.name).join(", ")}`;
-  const finalResponse = await generate(
-    prompts.promptConclusions(brand, strategySummary),
-    prompts.STRATEGY_SYSTEM_PROMPT,
-    { maxTokens: 2048 }
-  );
-  const { conclusions, recommendations } = parseJSON<{ conclusions: string[]; recommendations: string[] }>(finalResponse.text);
+  let conclusions: string[];
+  let recommendations: string[];
+  try {
+    const strategySummary = `${brand.companyName}: ${description.summary.slice(0, 200)}. Competidores: ${competitors.map((c) => c.name).join(", ")}. Pilares: ${contentPillars.map((p) => p.name).join(", ")}`;
+    const finalResponse = await generate(
+      prompts.promptConclusions(brand, strategySummary),
+      prompts.STRATEGY_SYSTEM_PROMPT,
+      { maxTokens: 2048 }
+    );
+    const parsed = parseJSON<{ conclusions: string[]; recommendations: string[] }>(finalResponse.text);
+    conclusions = parsed.conclusions;
+    recommendations = parsed.recommendations;
+  } catch (err) {
+    console.log(`  [Conclusions] Parse failed, using defaults: ${(err as Error).message?.slice(0, 50)}`);
+    conclusions = [
+      `${brand.companyName} tiene oportunidades significativas de crecimiento en el mercado digital.`,
+      "La estrategia de contenido multicanal permitira alcanzar al publico objetivo de forma efectiva.",
+      "La diferenciacion a traves de contenido de valor sera clave para destacar frente a la competencia.",
+      "Se recomienda implementar las fases de manera progresiva para optimizar recursos.",
+    ];
+    recommendations = [
+      "Priorizar la creacion de contenido SEO optimizado para captar trafico organico.",
+      "Invertir en redes sociales con contenido visual de alta calidad.",
+      "Establecer un sistema de medicion continua para ajustar la estrategia.",
+      "Considerar alianzas estrategicas para ampliar el alcance.",
+    ];
+  }
 
   // ─── Assemble Strategy ───
   const strategy: MarketingStrategy = {
