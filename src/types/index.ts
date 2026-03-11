@@ -9,7 +9,27 @@ export interface BrandIdentity {
   logo?: string;
   website?: string;
   instagram?: string;
+  location?: string;
   confirmed: boolean;
+}
+
+// ─── Web Search & Scraping ───
+
+export interface WebSearchResult {
+  title: string;
+  url: string;
+  snippet: string;
+  position: number;
+}
+
+export interface ScrapedCompetitorData {
+  url: string;
+  title: string;
+  description: string;
+  bodyText: string;
+  services: string[];
+  socialLinks: string[];
+  techStack?: string[];
 }
 
 // ─── Competitor ───
@@ -21,6 +41,7 @@ export interface Competitor {
   strengths: string[];
   weaknesses: string[];
   opportunitiesForUs: string[];
+  detailedAnalysis?: string;
   seoAnalysis?: {
     domainAuthority?: number;
     topKeywords: string[];
@@ -64,7 +85,7 @@ export interface KPI {
   target?: string;
 }
 
-// ─── Full 14-Point Strategy ───
+// ─── Full 12-Point Strategy ───
 
 export interface MarketingStrategy {
   id?: number;
@@ -72,28 +93,26 @@ export interface MarketingStrategy {
   createdAt: string;
   updatedAt: string;
 
-  // 1. Descripción
+  // 1. Descripcion
   description: { summary: string; objective: string };
 
-  // 2. Análisis de Competencia
+  // 2. Analisis de Competencia (5 competidores reales)
   competitors: Competitor[];
 
-  // 3. Análisis Comparativo
+  // 3. Analisis Comparativo
   comparativeAnalysis: string;
 
-  // 4. Keywords Estratégicas
+  // 4. Keywords Estrategicas
   keywordGroups: KeywordGroup[];
 
-  // 5. Conclusiones Estratégicas
+  // 5. Conclusiones Estrategicas (4 puntos)
   strategicConclusions: string[];
 
-  // 6. Propuestas de Diferenciación
+  // 6. Propuestas de Diferenciacion (4 puntos)
   differentiationProposals: string[];
 
-  // 7. Servicios
+  // 7. Servicios & Diseno de Marca
   services: { name: string; description: string }[];
-
-  // 8. Diseño de Marca
   brandDesign: {
     identity: BrandIdentity;
     personality: string;
@@ -102,7 +121,7 @@ export interface MarketingStrategy {
     styleReferences: string[];
   };
 
-  // 9. Estrategia de Contenido
+  // 8. Estrategia de Contenido
   contentStrategy: {
     targetAudience: string[];
     painPoints: string[];
@@ -111,19 +130,17 @@ export interface MarketingStrategy {
     tone: string;
   };
 
-  // 10. Pilares de Contenido
+  // 9. Pilares de Contenido
   contentPillars: ContentPillar[];
 
-  // 11. Grilla de Contenido
+  // 10. Grilla de Contenido
   contentGrid: ContentGridItem[];
 
-  // 12. KPIs
+  // 11. KPIs
   kpis: KPI[];
 
-  // 13. Cronograma
+  // 12. Cronograma + Conclusiones y Recomendaciones
   implementationTimeline: { phase: string; weeks: string; tasks: string[] }[];
-
-  // 14. Conclusiones y Recomendaciones
   conclusions: string[];
   recommendations: string[];
 }
@@ -166,3 +183,7 @@ export interface GeneratedContent {
   platform: string;
   createdAt: string;
 }
+
+// ─── Progress callback ───
+
+export type ProgressCallback = (step: number, total: number, message: string) => void;

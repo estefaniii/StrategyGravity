@@ -52,7 +52,7 @@ function classifyIntent(input: string): string {
   if (lower.includes("ver estrategia") || lower.includes("mostrar estrategia") || lower.includes("resumen")) return "show_strategy";
   if (lower.includes("listar") || lower.includes("estrategias guardadas")) return "list_strategies";
   if (lower.includes("cargar estrategia") || lower.match(/estrategia\s+#?\d+/)) return "load_strategy";
-  if (lower.includes("presentacion") || lower.includes("slides") || lower.includes("google slides")) return "generate_slides";
+  if (lower.includes("presentacion") || lower.includes("slides") || lower.includes("pptx") || lower.includes("powerpoint") || lower.includes("descargar")) return "generate_slides";
   if (lower.includes("actualizar") || lower.includes("update")) return "update_strategy";
 
   // Help
@@ -264,16 +264,14 @@ async function handleGenerateSlides(): Promise<string> {
   const strategy = loadCurrentStrategy();
   if (!strategy) return "No hay estrategia cargada.";
 
-  const { generatePresentation } = await import("../tools/slides-generator.js");
-  const result = await generatePresentation(strategy);
+  console.log(chalk.yellow("\n  Generando presentacion PPTX...\n"));
+  const { generatePptx } = await import("../tools/pptx-generator.js");
+  const result = await generatePptx(strategy);
 
   if (!result.success) return `Error al generar presentacion: ${result.error}`;
 
   const data = result.data as Record<string, unknown>;
-  if (data.url) {
-    return `Presentacion creada:\n  Ver: ${data.url}\n  Editar: ${data.editUrl}\n  Slides: ${data.slideCount}`;
-  }
-  return `Presentacion generada en modo offline (${data.slideCount} slides).\nConfigura service-account.json para exportar a Google Slides.`;
+  return `Presentacion PPTX generada exitosamente:\n  Archivo: ${data.filePath}\n  Slides: ${data.slideCount}\n\nEl archivo esta listo en la carpeta output/.`;
 }
 
 async function handleChat(input: string): Promise<string> {
@@ -320,7 +318,7 @@ ${chalk.bold("  Gestionar Estrategias:")}
   - "ver estrategia" - Resumen de la estrategia actual
   - "listar estrategias" - Ver todas las guardadas
   - "cargar estrategia #N" - Cargar una especifica
-  - "presentacion" / "slides" - Generar Google Slides
+  - "presentacion" / "pptx" / "descargar" - Generar archivo PPTX
 
 ${chalk.bold("  Generar Contenido:")}
   - "blog sobre [tema]" - Articulo de blog

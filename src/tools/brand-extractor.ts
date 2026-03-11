@@ -2,16 +2,10 @@ import * as cheerio from "cheerio";
 import { generate } from "../llm/index.js";
 import type { BrandIdentity, ToolResult } from "../types/index.js";
 import { askUser } from "../core/chat.js";
+import { fetchWithRetry } from "./http-utils.js";
 
 async function fetchPage(url: string): Promise<string> {
-  const response = await fetch(url, {
-    headers: {
-      "User-Agent": "Mozilla/5.0 (compatible; StrategyGravity/1.0; marketing-research)",
-      Accept: "text/html,application/xhtml+xml",
-    },
-  });
-  if (!response.ok) throw new Error(`Failed to fetch ${url}: ${response.status}`);
-  return response.text();
+  return fetchWithRetry(url);
 }
 
 function extractMetadata(html: string, url: string) {

@@ -1,5 +1,8 @@
 import { getResearchProvider } from "../llm/index.js";
-import type { ToolResult, Competitor, KeywordGroup } from "../types/index.js";
+import { searchGoogle, deduplicateUrls } from "./web-search.js";
+import { scrapeCompetitorWebsite } from "./web-scraper.js";
+import { delay } from "./http-utils.js";
+import type { ToolResult, Competitor, KeywordGroup, ScrapedCompetitorData } from "../types/index.js";
 
 export async function researchCompetitors(
   companyName: string,
@@ -8,42 +11,155 @@ export async function researchCompetitors(
 ): Promise<ToolResult> {
   const provider = getResearchProvider();
 
-  const prompt = `Perform a deep competitive analysis for "${companyName}" in the ${industry} industry, located in ${location}.
+  try {
+    // Step 1: Search Google for real competitors
+    console.log(`  [Research] Buscando competidores reales de "${companyName}"...`);
 
-Identify 5 main competitors and for each one provide:
-- Company name and website
-- Core services offered
-- Key strengths (2-3)
-- Weaknesses (2-3)
-- Specific opportunities for ${companyName} to exploit against them
-- SEO analysis: estimated top keywords they rank for
+    const queries = [
+      `mejores empresas ${industry} ${location}`,
+      `${industry} ${location} competidores`,
+      `${companyName} alternativas ${location}`,
+    ];
 
-Return ONLY valid JSON in this format:
+    const allResults = [];
+    for (const query of queries) {
+      const results = await searchGoogle(query, 10);
+      allResults.push(...results);
+      await delay(800);
+    }
+
+    // Filter out the company itself and non-business URLs
+    const excludePatterns = [
+      companyName.toLowerCase(),
+      "wikipedia", "youtube", "facebook", "instagram", "twitter",
+      "linkedin", "yelp", "tripadvisor", "google.com",
+    ];
+
+    const filtered = allResults.filter((r) => {
+      const lower = (r.url + r.title).toLowerCase();
+      return !excludePatterns.some((p) => lower.includes(p));
+    });
+
+    const unique = deduplicateUrls(filtered).slice(0, 5);
+
+    if (unique.length === 0) {
+      console.log("  [Research] No se encontraron competidores via web, usando LLM...");
+      return await researchCompetitorsWithLLM(companyName, industry, location);
+    }
+
+    // Step 2: Scrape each competitor website
+    console.log(`  [Research] Analizando ${unique.length} sitios web de competidores...`);
+
+    const scrapedData: ScrapedCompetitorData[] = [];
+    for (const result of unique) {
+      try {
+        const data = await scrapeCompetitorWebsite(result.url);
+        scrapedData.push(data);
+        await delay(1000);
+      } catch (err) {
+        console.log(`  [Research] Error scraping ${result.url}: ${(err as Error).message?.slice(0, 50)}`);
+      }
+    }
+
+    if (scrapedData.length === 0) {
+      console.log("  [Research] Scraping fallido, usando LLM...");
+      return await researchCompetitorsWithLLM(companyName, industry, location);
+    }
+
+    // Step 3: Send scraped data to LLM for structured analysis
+    console.log(`  [Research] Analizando ${scrapedData.length} competidores con IA...`);
+
+    const scrapedContext = scrapedData
+      .map(
+        (d, i) => `
+--- COMPETIDOR ${i + 1}: ${d.url} ---
+Titulo del sitio: ${d.title}
+Meta descripcion: ${d.description}
+Servicios detectados: ${d.services.join(", ") || "No detectados"}
+Redes sociales: ${d.socialLinks.join(", ") || "No encontradas"}
+Tecnologias: ${d.techStack?.join(", ") || "No detectadas"}
+Contenido del sitio (extracto): ${d.bodyText.slice(0, 3000)}
+`
+      )
+      .join("\n");
+
+    const prompt = `Eres un analista de inteligencia competitiva de elite. Analiza estos datos REALES extraidos de sitios web de competidores de "${companyName}" en la industria de ${industry} en ${location}.
+
+DATOS REALES EXTRAIDOS DE SITIOS WEB:
+${scrapedContext}
+
+Para CADA competidor, crea un analisis PROFUNDO y DETALLADO que incluya:
+1. Nombre de la empresa y su descripcion
+2. Servicios principales detectados en su sitio web
+3. FORTALEZAS (minimo 3) con explicacion detallada
+4. DEBILIDADES (minimo 3) con explicacion detallada
+5. OPORTUNIDADES para ${companyName}
+6. Analisis SEO basico
+
+IMPORTANTE: El campo detailedAnalysis debe tener AL MENOS 200 palabras por competidor.
+
+Retorna SOLO JSON valido:
 {
   "competitors": [
     {
-      "name": "Competitor Name",
-      "website": "https://...",
-      "services": ["service1", "service2"],
-      "strengths": ["strength1", "strength2"],
-      "weaknesses": ["weakness1", "weakness2"],
-      "opportunitiesForUs": ["opportunity1", "opportunity2"],
-      "seoAnalysis": {
-        "topKeywords": ["keyword1", "keyword2"],
-        "estimatedTraffic": "high/medium/low"
-      }
+      "name": "nombre",
+      "website": "url",
+      "detailedAnalysis": "analisis extenso de 200+ palabras...",
+      "services": ["servicio1", "servicio2"],
+      "strengths": ["fortaleza detallada 1", "fortaleza 2", "fortaleza 3"],
+      "weaknesses": ["debilidad detallada 1", "debilidad 2", "debilidad 3"],
+      "opportunitiesForUs": ["oportunidad 1", "oportunidad 2"],
+      "seoAnalysis": { "topKeywords": ["kw1", "kw2"], "estimatedTraffic": "nivel" }
     }
   ]
 }`;
 
-  try {
-    const response = await provider.generate(prompt, "You are an expert competitive intelligence analyst and SEO specialist. Provide detailed, actionable competitive analysis. Return ONLY valid JSON.", { maxTokens: 8192 });
+    const response = await provider.generate(
+      prompt,
+      "Eres un analista de inteligencia competitiva experto. Retorna SOLO JSON valido, sin markdown.",
+      { maxTokens: 8192 }
+    );
 
     const jsonMatch = response.text.match(/\{[\s\S]*\}/);
     const data = JSON.parse(jsonMatch?.[0] ?? response.text);
     return { success: true, data: data.competitors as Competitor[] };
   } catch (err) {
-    return { success: false, error: `Competitor research failed: ${(err as Error).message}` };
+    console.log(`  [Research] Error: ${(err as Error).message}`);
+    return await researchCompetitorsWithLLM(companyName, industry, location);
+  }
+}
+
+async function researchCompetitorsWithLLM(
+  companyName: string,
+  industry: string,
+  location: string
+): Promise<ToolResult> {
+  const provider = getResearchProvider();
+
+  const prompt = `Realiza un analisis competitivo PROFUNDO para "${companyName}" en ${industry}, ${location}.
+Identifica 5 competidores principales REALES. Para cada uno:
+- Nombre y sitio web REAL
+- Servicios, fortalezas (3+), debilidades (3+), oportunidades
+- Analisis SEO
+
+Retorna SOLO JSON:
+{
+  "competitors": [
+    {
+      "name": "nombre", "website": "url", "detailedAnalysis": "200+ palabras...",
+      "services": [], "strengths": [], "weaknesses": [], "opportunitiesForUs": [],
+      "seoAnalysis": { "topKeywords": [], "estimatedTraffic": "nivel" }
+    }
+  ]
+}`;
+
+  try {
+    const response = await provider.generate(prompt, "Analista competitivo experto. Solo JSON.", { maxTokens: 8192 });
+    const jsonMatch = response.text.match(/\{[\s\S]*\}/);
+    const data = JSON.parse(jsonMatch?.[0] ?? response.text);
+    return { success: true, data: data.competitors as Competitor[] };
+  } catch (err) {
+    return { success: false, error: `Investigacion fallo: ${(err as Error).message}` };
   }
 }
 
@@ -55,71 +171,58 @@ export async function researchKeywords(
 ): Promise<ToolResult> {
   const provider = getResearchProvider();
 
-  const prompt = `Perform strategic keyword research for "${companyName}" - a ${industry} company in ${location}.
+  let keywordContext = "";
+  try {
+    const results = await searchGoogle(`${industry} ${location} keywords SEO tendencias 2025 2026`, 5);
+    if (results.length > 0) {
+      keywordContext = `\nResultados web sobre keywords:\n${results.map((r) => `- ${r.title}: ${r.snippet}`).join("\n")}`;
+    }
+  } catch {}
 
-Their services: ${services.join(", ")}
+  const prompt = `Investigacion de keywords para "${companyName}" - ${industry} en ${location}.
+Servicios: ${services.join(", ")}
+${keywordContext}
 
-Create keyword groups organized by search intent:
-1. Transactional / High-Value Intent (buying keywords)
-2. Geographic - Urban & Landmark keywords
-3. Geographic - Coastal, Rural & Emerging areas
-4. Property Type & Competitive Conquest keywords
-5. Informational / Educational keywords
+5 categorias: Transaccional, Geograficas Urbanas, Geograficas Costeras/Rurales, Tipologia/Conquista, Informacional.
+AL MENOS 8 keywords por categoria.
 
-For each keyword include the search intent type.
-
-Return ONLY valid JSON:
+Retorna SOLO JSON:
 {
   "keywordGroups": [
-    {
-      "category": "Category Name",
-      "keywords": [
-        { "term": "keyword phrase", "intent": "transactional/informational/navigational", "volume": "high/medium/low", "difficulty": "high/medium/low" }
-      ]
-    }
+    { "category": "nombre", "keywords": [{ "term": "keyword", "intent": "tipo", "volume": "nivel", "difficulty": "nivel" }] }
   ]
 }`;
 
   try {
-    const response = await provider.generate(prompt, "You are an SEO keyword research specialist. Return ONLY valid JSON.", { maxTokens: 8192 });
-
+    const response = await provider.generate(prompt, "Especialista SEO. Solo JSON.", { maxTokens: 8192 });
     const jsonMatch = response.text.match(/\{[\s\S]*\}/);
     const data = JSON.parse(jsonMatch?.[0] ?? response.text);
     return { success: true, data: data.keywordGroups as KeywordGroup[] };
   } catch (err) {
-    return { success: false, error: `Keyword research failed: ${(err as Error).message}` };
+    return { success: false, error: `Keywords fallo: ${(err as Error).message}` };
   }
 }
 
 export async function researchMarketTrends(industry: string, location: string): Promise<ToolResult> {
   const provider = getResearchProvider();
 
-  const prompt = `Analyze current market trends for the ${industry} industry in ${location}.
+  let trendContext = "";
+  try {
+    const results = await searchGoogle(`${industry} ${location} tendencias 2025 2026`, 5);
+    if (results.length > 0) {
+      trendContext = `\nTendencias reales:\n${results.map((r) => `- ${r.title}: ${r.snippet}`).join("\n")}`;
+    }
+  } catch {}
 
-Cover:
-1. Major industry trends (2024-2025)
-2. Consumer behavior shifts
-3. Technology adoption trends
-4. Regulatory changes
-5. Emerging opportunities
-6. Potential threats
-
-Return ONLY valid JSON:
-{
-  "trends": [
-    { "category": "category", "trend": "description", "impact": "high/medium/low", "timeframe": "immediate/6months/1year" }
-  ],
-  "opportunities": ["opportunity1", "opportunity2"],
-  "threats": ["threat1", "threat2"]
-}`;
+  const prompt = `Tendencias del mercado de ${industry} en ${location}.${trendContext}
+Retorna JSON: { "trends": [{"category":"","trend":"","impact":"","timeframe":""}], "opportunities": [], "threats": [] }`;
 
   try {
-    const response = await provider.generate(prompt, "You are a market research analyst. Return ONLY valid JSON.", { maxTokens: 4096 });
-
+    const response = await provider.generate(prompt, "Analista de mercado. Solo JSON.", { maxTokens: 4096 });
     const jsonMatch = response.text.match(/\{[\s\S]*\}/);
     const data = JSON.parse(jsonMatch?.[0] ?? response.text);
     return { success: true, data };
   } catch (err) {
-    return { success: false, error: `Market research failed: ${(err as Error).message}` };
+    return { success: false, error: `Tendencias fallo: ${(err as Error).message}` };
   }
 }

@@ -13,7 +13,15 @@ ${chalk.bold.magenta("  ║")}${chalk.dim("        AI Marketing Strategy Agent  
 ${chalk.bold.magenta("  ╚═══════════════════════════════════════════════════╝")}
 `;
 
-async function main() {
+// Check for --web flag
+const isWebMode = process.argv.includes("--web");
+
+async function startWeb() {
+  const { startWebServer } = await import("./web/server.js");
+  startWebServer();
+}
+
+async function startCli() {
   console.clear();
   console.log(BANNER);
 
@@ -85,7 +93,15 @@ process.on("unhandledRejection", (err) => {
   console.error(chalk.red(`\n  Error no manejado: ${err}\n`));
 });
 
-main().catch((err) => {
-  console.error(chalk.red(`Fatal: ${err.message}`));
-  process.exit(1);
-});
+// Start in the appropriate mode
+if (isWebMode) {
+  startWeb().catch((err) => {
+    console.error(chalk.red(`Fatal: ${err.message}`));
+    process.exit(1);
+  });
+} else {
+  startCli().catch((err) => {
+    console.error(chalk.red(`Fatal: ${err.message}`));
+    process.exit(1);
+  });
+}
