@@ -25,7 +25,7 @@ export async function researchCompetitors(
     for (const query of queries) {
       const results = await searchGoogle(query, 10);
       allResults.push(...results);
-      await delay(800);
+      await delay(5000); // Give rate limits time to reset between searches
     }
 
     // Filter out the company itself and non-business URLs

@@ -44,8 +44,8 @@ export function getFastProvider(): LLMProviderInterface {
 
 export function getResearchProvider(): LLMProviderInterface {
   if (Object.keys(providers).length === 0) initProviders();
-  // Gemini for research, then Claude
-  for (const key of ["gemini", "claude", "openrouter"]) {
+  // Claude for research (most reliable), then Gemini, then OpenRouter
+  for (const key of ["claude", "gemini", "openrouter"]) {
     if (providers[key]) return providers[key];
   }
   throw new Error("No research LLM provider available");

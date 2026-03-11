@@ -1,56 +1,98 @@
 import * as cheerio from "cheerio";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import Anthropic from "@anthropic-ai/sdk";
 import { env } from "../config/env.js";
 import { fetchPage, delay } from "./http-utils.js";
 import type { WebSearchResult } from "../types/index.js";
 
-// ─── Approach A: Gemini with Google Search grounding ───
+// ─── Approach A: Claude with web_search tool (most reliable) ───
 
-async function searchWithGemini(query: string, count: number): Promise<WebSearchResult[]> {
-  if (!env.GEMINI_API_KEY) throw new Error("No Gemini API key");
+async function searchWithClaude(query: string, count: number): Promise<WebSearchResult[]> {
+  if (!env.ANTHROPIC_API_KEY) throw new Error("No Anthropic API key");
 
-  const client = new GoogleGenerativeAI(env.GEMINI_API_KEY);
-  const model = client.getGenerativeModel({
-    model: "gemini-2.0-flash",
-    tools: [{ googleSearch: {} } as any],
-  });
+  const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
 
-  const result = await model.generateContent(
-    `Busca en Google: "${query}". Lista los ${count} primeros resultados con titulo, URL exacta y descripcion breve. Retorna SOLO JSON valido:
-[{"title": "titulo", "url": "https://...", "snippet": "descripcion", "position": 1}]`
-  );
-
-  const text = result.response.text();
-
-  // Try to extract grounding metadata
-  const candidate = result.response.candidates?.[0];
-  const grounding = (candidate as any)?.groundingMetadata;
-
-  if (grounding?.groundingChunks?.length) {
-    return grounding.groundingChunks
-      .filter((chunk: any) => chunk.web?.uri)
-      .slice(0, count)
-      .map((chunk: any, i: number) => ({
-        title: chunk.web.title || "",
-        url: chunk.web.uri,
-        snippet: "",
-        position: i + 1,
-      }));
+  // Retry loop for rate limits
+  let response: Anthropic.Messages.Message;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      response = await client.messages.create({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 2048,
+        messages: [
+          {
+            role: "user",
+            content: `Busca en internet: "${query}". Necesito los ${count} primeros resultados con sus URLs reales. Para cada resultado proporciona titulo, URL y un snippet breve. Responde SOLO con JSON valido en este formato:
+[{"title": "titulo", "url": "https://...", "snippet": "descripcion breve", "position": 1}]`,
+          },
+        ],
+        tools: [
+          {
+            type: "web_search_20250305" as any,
+            name: "web_search",
+            max_uses: 3,
+          } as any,
+        ],
+      });
+      break; // success
+    } catch (err: any) {
+      if ((err?.status === 429 || err?.message?.includes("rate_limit")) && attempt < 3) {
+        const waitMs = 20000 * (attempt + 1);
+        console.log(`  [Search] Rate limit, esperando ${Math.round(waitMs / 1000)}s...`);
+        await delay(waitMs);
+        continue;
+      }
+      throw err;
+    }
   }
+  if (!response!) throw new Error("Search failed after retries");
 
-  // Fallback: parse from text response
+  // Extract text content from response
+  const textBlocks = response.content.filter(
+    (block): block is Anthropic.TextBlock => block.type === "text"
+  );
+  const fullText = textBlocks.map((b) => b.text).join("\n");
+
+  // Try to parse JSON from response
   try {
-    const jsonMatch = text.match(/\[[\s\S]*\]/);
+    const jsonMatch = fullText.match(/\[[\s\S]*\]/);
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0]) as WebSearchResult[];
-      return parsed.slice(0, count);
+      return parsed.slice(0, count).map((r, i) => ({ ...r, position: i + 1 }));
     }
   } catch {}
 
-  return [];
+  // If no JSON, extract URLs from search results blocks
+  const searchResults: WebSearchResult[] = [];
+  for (const block of response.content) {
+    if ((block as any).type === "web_search_tool_result") {
+      const results = (block as any).content || [];
+      for (const r of results) {
+        if (r.type === "web_search_result" && r.url) {
+          searchResults.push({
+            title: r.title || "",
+            url: r.url,
+            snippet: r.snippet || "",
+            position: searchResults.length + 1,
+          });
+        }
+      }
+    }
+  }
+
+  if (searchResults.length > 0) {
+    return searchResults.slice(0, count);
+  }
+
+  // Last resort: extract URLs from text
+  const urlRegex = /https?:\/\/[^\s"'<>\]]+/g;
+  const urls = fullText.match(urlRegex) || [];
+  return urls
+    .filter((url) => !url.includes("google.com") && !url.includes("anthropic.com"))
+    .slice(0, count)
+    .map((url, i) => ({ title: "", url, snippet: "", position: i + 1 }));
 }
 
-// ─── Approach B: Direct Google scraping ───
+// ─── Approach B: Direct Google scraping (fallback) ───
 
 async function searchWithScraping(query: string, count: number): Promise<WebSearchResult[]> {
   const url = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=${count + 5}&hl=es`;
@@ -59,7 +101,6 @@ async function searchWithScraping(query: string, count: number): Promise<WebSear
   const $ = cheerio.load(html);
   const results: WebSearchResult[] = [];
 
-  // Parse Google search results
   $("div.g").each((i, el) => {
     if (results.length >= count) return;
 
@@ -78,7 +119,6 @@ async function searchWithScraping(query: string, count: number): Promise<WebSear
     }
   });
 
-  // Alternative selectors if the above fails
   if (results.length === 0) {
     $("a[href^='http']").each((i, el) => {
       if (results.length >= count) return;
@@ -93,25 +133,25 @@ async function searchWithScraping(query: string, count: number): Promise<WebSear
   return results;
 }
 
-// ─── Main export: tries Gemini first, falls back to scraping ───
+// ─── Main export: tries Claude web_search first, falls back to scraping ───
 
 export async function searchGoogle(query: string, count = 10): Promise<WebSearchResult[]> {
   console.log(`  [Search] Buscando: "${query.slice(0, 80)}..."`);
 
-  // Try Gemini grounded search first
+  // Try Claude web_search first (most reliable)
   try {
-    const results = await searchWithGemini(query, count);
-    if (results.length >= 3) {
-      console.log(`  [Search] ${results.length} resultados via Gemini`);
+    const results = await searchWithClaude(query, count);
+    if (results.length > 0) {
+      console.log(`  [Search] ${results.length} resultados via Claude web_search`);
       return results;
     }
   } catch (err) {
-    console.log(`  [Search] Gemini search fallback: ${(err as Error).message?.slice(0, 50)}`);
+    console.log(`  [Search] Claude web_search error: ${(err as Error).message?.slice(0, 80)}`);
   }
 
   // Fallback to direct scraping
   try {
-    await delay(1000); // Rate limit
+    await delay(1000);
     const results = await searchWithScraping(query, count);
     if (results.length > 0) {
       console.log(`  [Search] ${results.length} resultados via scraping`);
