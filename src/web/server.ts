@@ -2,7 +2,10 @@ import express from "express";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { initDatabase } from "../core/memory.js";
-import { extractBrandFromUrl, extractBrandFromInstagram, extractBrandFromDescription } from "../tools/brand-extractor.js";
+import { extractBrandFromUrl, extractBrandFromInstagram, extractBrandFromDescription, setAutoConfirm } from "../tools/brand-extractor.js";
+
+// Web mode: no terminal available, auto-confirm brand data
+setAutoConfirm(true);
 import { generateStrategy } from "../strategy/generator.js";
 import { generatePptx } from "../tools/pptx-generator.js";
 import { getLatestStrategy, getStrategy, listStrategies } from "../core/memory.js";
@@ -201,8 +204,8 @@ app.get("/api/pptx/download/:id", async (req, res) => {
   }
 });
 
-// ─── SPA fallback ───
-app.get("*", (_req, res) => {
+// ─── SPA fallback (Express 5 syntax) ───
+app.get("/{*splat}", (_req, res) => {
   res.sendFile(resolve(__dirname, "public", "index.html"));
 });
 

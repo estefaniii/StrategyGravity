@@ -1,4 +1,4 @@
-export { extractBrandFromUrl, extractBrandFromInstagram, extractBrandFromDescription } from "./brand-extractor.js";
+export { extractBrandFromUrl, extractBrandFromInstagram, extractBrandFromDescription, setAutoConfirm } from "./brand-extractor.js";
 export { searchImages, getImageForSlide } from "./image-search.js";
 export { researchCompetitors, researchKeywords, researchMarketTrends } from "./deep-research.js";
 export { searchGoogle, deduplicateUrls } from "./web-search.js";

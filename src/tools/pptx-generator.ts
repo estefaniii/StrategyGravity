@@ -1,9 +1,12 @@
-import PptxGenJS from "pptxgenjs";
+import PptxGenJSImport from "pptxgenjs";
 import { mkdirSync, existsSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { env } from "../config/env.js";
 import type { MarketingStrategy, ToolResult } from "../types/index.js";
+
+// Handle ESM/CJS interop - pptxgenjs may export default differently
+const PptxGenJS = (PptxGenJSImport as any).default || PptxGenJSImport;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 

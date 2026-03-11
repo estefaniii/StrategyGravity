@@ -1,10 +1,23 @@
 import { config } from "dotenv";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
+import { existsSync } from "fs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const envPath = resolve(__dirname, "../../.env");
-config({ path: envPath, override: true });
+
+// Try multiple possible .env locations (worktree support)
+const envCandidates = [
+  resolve(__dirname, "../../.env"),
+  resolve(process.cwd(), ".env"),
+  resolve(process.cwd(), "../../.env"),
+];
+
+for (const candidate of envCandidates) {
+  if (existsSync(candidate)) {
+    config({ path: candidate, override: true });
+    break;
+  }
+}
 
 export interface EnvConfig {
   ANTHROPIC_API_KEY: string;

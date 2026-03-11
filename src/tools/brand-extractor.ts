@@ -1,8 +1,20 @@
 import * as cheerio from "cheerio";
 import { generate } from "../llm/index.js";
 import type { BrandIdentity, ToolResult } from "../types/index.js";
-import { askUser } from "../core/chat.js";
 import { fetchWithRetry } from "./http-utils.js";
+
+// Auto-confirm flag for web mode (no terminal available)
+let autoConfirm = false;
+export function setAutoConfirm(value: boolean) { autoConfirm = value; }
+
+async function askUserOrAutoConfirm(prompt: string): Promise<string> {
+  if (autoConfirm) {
+    console.log(`  [Auto-confirm] ${prompt.slice(0, 60)}...`);
+    return "ok";
+  }
+  const { askUser } = await import("../core/chat.js");
+  return askUser(prompt);
+}
 
 async function fetchPage(url: string): Promise<string> {
   return fetchWithRetry(url);
@@ -98,7 +110,7 @@ Extract and return this JSON structure:
       console.log(`  Colores: ${JSON.stringify(identity.colors)}`);
       console.log(`  Tipografias: ${JSON.stringify(identity.fonts)}`);
 
-      const userConfirm = await askUser(
+      const userConfirm = await askUserOrAutoConfirm(
         "Necesito que confirmes o corrijas estos datos de identidad visual.\n" +
         "Escribe 'ok' para confirmar, o proporciona los datos correctos (ej: 'colores: #1a1a1a, #ff5500, #ffffff | fuentes: Montserrat, Open Sans'):"
       );
@@ -170,7 +182,7 @@ Return ONLY valid JSON:
     console.log(`\n  Marca detectada: ${identity.companyName}`);
     console.log(`  Industria: ${identity.industry}`);
     console.log(`  Colores: ${JSON.stringify(identity.colors)}`);
-    const userConfirm = await askUser(
+    const userConfirm = await askUserOrAutoConfirm(
       "No puedo acceder directamente a Instagram. Confirma estos datos o corrigelos.\n" +
       "Escribe 'ok' para confirmar, o proporciona los datos correctos:"
     );
@@ -236,7 +248,7 @@ Return ONLY valid JSON:
     console.log(`\n  Marca sugerida: ${identity.companyName}`);
     console.log(`  Colores sugeridos: ${JSON.stringify(identity.colors)}`);
     console.log(`  Tipografias sugeridas: ${JSON.stringify(identity.fonts)}`);
-    const userConfirm = await askUser("Confirma estos datos de marca o corrigelos (escribe 'ok' o los datos correctos):");
+    const userConfirm = await askUserOrAutoConfirm("Confirma estos datos de marca o corrigelos (escribe 'ok' o los datos correctos):");
 
     if (userConfirm.toLowerCase() !== "ok") {
       const nameMatch = userConfirm.match(/nombre:\s*([^|]+)/i);

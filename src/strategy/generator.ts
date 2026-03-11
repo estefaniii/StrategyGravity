@@ -8,7 +8,29 @@ import chalk from "chalk";
 function parseJSON<T>(text: string): T {
   const match = text.match(/\{[\s\S]*\}/);
   if (!match) throw new Error("No JSON found in response");
-  return JSON.parse(match[0]) as T;
+  try {
+    return JSON.parse(match[0]) as T;
+  } catch {
+    // Try to fix common JSON issues: trailing commas, unescaped newlines
+    let fixed = match[0]
+      .replace(/,\s*([}\]])/g, "$1")           // trailing commas
+      .replace(/[\r\n]+/g, " ")                  // newlines inside strings
+      .replace(/\t/g, " ");                      // tabs
+    try {
+      return JSON.parse(fixed) as T;
+    } catch {
+      // Last resort: extract up to the last valid closing brace
+      const lastBrace = fixed.lastIndexOf("}");
+      if (lastBrace > 0) {
+        try {
+          return JSON.parse(fixed.slice(0, lastBrace + 1)) as T;
+        } catch {
+          throw new Error("Failed to parse JSON after multiple attempts");
+        }
+      }
+      throw new Error("Failed to parse JSON from LLM response");
+    }
+  }
 }
 
 function log(step: string, msg: string) {
@@ -171,12 +193,24 @@ export async function generateStrategy(
   // ─── Point 11: KPIs ───
   emit(11, TOTAL, "Definiendo KPIs...");
   log("11/12", "KPIs...");
-  const kpiResponse = await generate(
-    prompts.promptKPIs(brand),
-    prompts.STRATEGY_SYSTEM_PROMPT,
-    { maxTokens: 2048 }
-  );
-  const { kpis } = parseJSON<{ kpis: MarketingStrategy["kpis"] }>(kpiResponse.text);
+  let kpis: MarketingStrategy["kpis"] = [];
+  try {
+    const kpiResponse = await generate(
+      prompts.promptKPIs(brand),
+      prompts.STRATEGY_SYSTEM_PROMPT,
+      { maxTokens: 4096 }
+    );
+    const parsed = parseJSON<{ kpis: MarketingStrategy["kpis"] }>(kpiResponse.text);
+    kpis = parsed.kpis;
+  } catch (err) {
+    log("11/12", `KPIs parciales: ${(err as Error).message?.slice(0, 50)}`);
+    kpis = [
+      { category: "Atraccion y SEO", metric: "Trafico organico mensual", description: "Visitas desde buscadores", target: "+30% en 6 meses" },
+      { category: "Conversion y Ventas", metric: "Tasa de conversion", description: "Porcentaje de visitantes que convierten", target: "3-5%" },
+      { category: "Retencion y Lealtad", metric: "Tasa de retencion", description: "Clientes que repiten", target: "+20% en 6 meses" },
+      { category: "Marca y Engagement", metric: "Engagement rate", description: "Interacciones en redes sociales", target: "4-6%" },
+    ];
+  }
 
   // ─── Point 12: Timeline + Conclusions ───
   emit(12, TOTAL, "Creando cronograma y conclusiones finales...");

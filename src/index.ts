@@ -13,8 +13,8 @@ ${chalk.bold.magenta("  ║")}${chalk.dim("        AI Marketing Strategy Agent  
 ${chalk.bold.magenta("  ╚═══════════════════════════════════════════════════╝")}
 `;
 
-// Check for --web flag
-const isWebMode = process.argv.includes("--web");
+// Check for --web flag (via argv or env var)
+const isWebMode = process.argv.includes("--web") || process.env.SG_MODE === "web";
 
 async function startWeb() {
   const { startWebServer } = await import("./web/server.js");
