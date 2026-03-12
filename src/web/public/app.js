@@ -172,16 +172,20 @@ async function submitQuestionnaire() {
 
 // ─── Sidebar Toggle (Mobile) ───
 function toggleSidebar() {
-  document.getElementById('sidebar').classList.toggle('open');
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('sidebar-overlay');
+  sidebar.classList.toggle('open');
+  overlay.classList.toggle('open');
+  document.body.classList.toggle('sidebar-open');
 }
 
-// Close sidebar when clicking outside on mobile
-document.addEventListener('click', (e) => {
+function closeSidebar() {
   const sidebar = document.getElementById('sidebar');
-  if (sidebar.classList.contains('open') && !sidebar.contains(e.target) && !e.target.closest('.hamburger')) {
-    sidebar.classList.remove('open');
-  }
-});
+  const overlay = document.getElementById('sidebar-overlay');
+  sidebar.classList.remove('open');
+  overlay.classList.remove('open');
+  document.body.classList.remove('sidebar-open');
+}
 
 // ─── SSE Connection ───
 function connectSSE() {
@@ -430,16 +434,18 @@ function renderKeywords(s) {
   return s.keywordGroups.map(g => `
     <div style="margin-bottom:20px;">
       <h4 style="font-size:14px;margin-bottom:12px;">${g.category}</h4>
-      <table class="strategy-table">
-        <thead>
-          <tr><th>Keyword</th><th>Intención</th><th>Volumen</th><th>Dificultad</th></tr>
-        </thead>
-        <tbody>
-          ${(g.keywords || []).map(k => `
-            <tr><td>${k.term}</td><td>${k.intent || '-'}</td><td>${k.volume || '-'}</td><td>${k.difficulty || '-'}</td></tr>
-          `).join('')}
-        </tbody>
-      </table>
+      <div class="table-scroll">
+        <table class="strategy-table">
+          <thead>
+            <tr><th>Keyword</th><th>Intención</th><th>Volumen</th><th>Dificultad</th></tr>
+          </thead>
+          <tbody>
+            ${(g.keywords || []).map(k => `
+              <tr><td>${k.term}</td><td>${k.intent || '-'}</td><td>${k.volume || '-'}</td><td>${k.difficulty || '-'}</td></tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
     </div>
   `).join('');
 }
@@ -479,10 +485,12 @@ function renderBrand(s) {
 
   return `
     <h4 style="margin-bottom:12px;">Servicios</h4>
-    <table class="strategy-table">
-      <thead><tr><th>Servicio</th><th>Descripción</th></tr></thead>
-      <tbody>${services.map(sv => `<tr><td style="font-weight:600;">${sv.name}</td><td>${sv.description}</td></tr>`).join('')}</tbody>
-    </table>
+    <div class="table-scroll">
+      <table class="strategy-table">
+        <thead><tr><th>Servicio</th><th>Descripción</th></tr></thead>
+        <tbody>${services.map(sv => `<tr><td style="font-weight:600;">${sv.name}</td><td>${sv.description}</td></tr>`).join('')}</tbody>
+      </table>
+    </div>
     <div style="margin-top:20px;">
       <h4 style="margin-bottom:12px;">Personalidad de Marca</h4>
       <p>${bd.personality || ''}</p>
@@ -547,14 +555,16 @@ function renderPillars(s) {
 function renderGrid(s) {
   if (!s.contentGrid || !s.contentGrid.length) return '<p>No disponible</p>';
   return `
-    <table class="strategy-table">
-      <thead><tr><th>Día</th><th>Plataforma</th><th>Tipo</th><th>Tema</th><th>Pilar</th></tr></thead>
-      <tbody>
-        ${s.contentGrid.map(g => `
-          <tr><td>${g.day}</td><td>${g.platform}</td><td>${g.contentType}</td><td>${g.topic}</td><td>${g.pillar || '-'}</td></tr>
-        `).join('')}
-      </tbody>
-    </table>
+    <div class="table-scroll">
+      <table class="strategy-table">
+        <thead><tr><th>Día</th><th>Plataforma</th><th>Tipo</th><th>Tema</th><th>Pilar</th></tr></thead>
+        <tbody>
+          ${s.contentGrid.map(g => `
+            <tr><td>${g.day}</td><td>${g.platform}</td><td>${g.contentType}</td><td>${g.topic}</td><td>${g.pillar || '-'}</td></tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
   `;
 }
 
@@ -601,12 +611,14 @@ function renderKPIs(s) {
   }
 
   return `
-    <table class="strategy-table">
-      <thead><tr><th>Métrica</th><th>Descripción</th><th>Target</th></tr></thead>
-      <tbody>
-        ${rows}
-      </tbody>
-    </table>
+    <div class="table-scroll">
+      <table class="strategy-table">
+        <thead><tr><th>Métrica</th><th>Descripción</th><th>Target</th></tr></thead>
+        <tbody>
+          ${rows}
+        </tbody>
+      </table>
+    </div>
   `;
 }
 

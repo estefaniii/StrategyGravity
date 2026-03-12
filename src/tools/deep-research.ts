@@ -1,8 +1,66 @@
 import { getResearchProvider } from "../llm/index.js";
 import { searchGoogle, deduplicateUrls } from "./web-search.js";
 import { scrapeCompetitorWebsite } from "./web-scraper.js";
-import { delay } from "./http-utils.js";
+import { delay, verifyUrl, verifyUrls } from "./http-utils.js";
 import type { ToolResult, Competitor, KeywordGroup, ScrapedCompetitorData } from "../types/index.js";
+
+/**
+ * Verify competitor URLs via HTTP HEAD requests.
+ * For unverified URLs, try domain variations. Mark each competitor as verified or not.
+ */
+async function verifyCompetitorUrls(competitors: Competitor[]): Promise<Competitor[]> {
+  if (competitors.length === 0) return competitors;
+
+  const urls = competitors.map((c) => c.website).filter(Boolean);
+  if (urls.length === 0) return competitors;
+
+  console.log(`  [Research] Verificando ${urls.length} URLs de competidores...`);
+  const verification = await verifyUrls(urls, 5000);
+
+  const result: Competitor[] = [];
+  for (const comp of competitors) {
+    const isVerified = verification.get(comp.website);
+    if (isVerified) {
+      result.push({ ...comp, urlVerified: true });
+      continue;
+    }
+
+    // Try domain variations from company name
+    const slug = comp.name
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, "")
+      .slice(0, 30);
+
+    const candidates = [
+      `https://www.${slug}.com`,
+      `https://${slug}.com`,
+      `https://www.${slug}.com.pa`,
+      `https://www.${slug}.co`,
+    ];
+
+    let correctedUrl: string | null = null;
+    for (const candidate of candidates) {
+      if (await verifyUrl(candidate, 3000)) {
+        correctedUrl = candidate;
+        break;
+      }
+    }
+
+    if (correctedUrl) {
+      console.log(`  [Research] URL corregida: ${comp.website} -> ${correctedUrl}`);
+      result.push({ ...comp, website: correctedUrl, urlVerified: true });
+    } else {
+      console.log(`  [Research] URL no verificada: ${comp.website} (${comp.name})`);
+      result.push({ ...comp, urlVerified: false });
+    }
+  }
+
+  const verifiedCount = result.filter((c) => c.urlVerified).length;
+  console.log(`  [Research] ${verifiedCount}/${result.length} URLs verificadas`);
+  return result;
+}
 
 export async function researchCompetitors(
   companyName: string,
@@ -202,7 +260,9 @@ Retorna SOLO JSON valido:
 
     const jsonMatch = response.text.match(/\{[\s\S]*\}/);
     const data = JSON.parse(jsonMatch?.[0] ?? response.text);
-    return { success: true, data: data.competitors as Competitor[] };
+    // Verify URLs from LLM analysis (they come from web search so most should resolve)
+    const verifiedCompetitors = await verifyCompetitorUrls(data.competitors as Competitor[]);
+    return { success: true, data: verifiedCompetitors };
   } catch (err) {
     console.log(`  [Research] Error: ${(err as Error).message}`);
     return await researchCompetitorsWithLLM(companyName, industry, location);
@@ -247,13 +307,15 @@ Retorna SOLO JSON:
 }`;
 
   try {
-    const response = await provider.generate(prompt, "Analista competitivo experto. Solo JSON.", { maxTokens: 8192 });
+    const response = await provider.generate(prompt, "Analista competitivo experto. Solo JSON.", { maxTokens: 4096 });
     const jsonMatch = response.text.match(/\{[\s\S]*\}/);
     const data = JSON.parse(jsonMatch?.[0] ?? response.text);
     // Handle different response shapes from various LLM providers
     const competitors = data.competitors || data.competidores || data.competitor_analysis || [];
     if (Array.isArray(competitors) && competitors.length > 0) {
-      return { success: true, data: competitors as Competitor[] };
+      // Verify URLs — LLM-only path is most likely to hallucinate
+      const verifiedCompetitors = await verifyCompetitorUrls(competitors as Competitor[]);
+      return { success: true, data: verifiedCompetitors };
     }
     console.log(`  [Research] LLM retorno JSON pero sin competidores validos`);
     return { success: false, error: "LLM no genero competidores" };
@@ -293,7 +355,7 @@ Retorna SOLO JSON:
 }`;
 
   try {
-    const response = await provider.generate(prompt, "Especialista SEO. Solo JSON.", { maxTokens: 8192 });
+    const response = await provider.generate(prompt, "Especialista SEO. Solo JSON.", { maxTokens: 4096 });
     const jsonMatch = response.text.match(/\{[\s\S]*\}/);
     const data = JSON.parse(jsonMatch?.[0] ?? response.text);
     return { success: true, data: data.keywordGroups as KeywordGroup[] };

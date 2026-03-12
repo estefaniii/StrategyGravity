@@ -8,9 +8,16 @@ REGLAS CRÍTICAS:
 3. Usa datos concretos, porcentajes y referencias reales cuando sea posible
 4. No uses generalizaciones vagas - sé ESPECÍFICO para la industria y el negocio
 5. Cada análisis de competidor debe ser extenso con insights únicos
-6. SIEMPRE retorna JSON válido cuando se solicite - sin markdown, sin backticks
-7. Tu análisis debe ser TAN PROFESIONAL que podría presentarse a un C-suite sin modificaciones
-8. Piensa como un consultor que cobra $50,000 USD por estrategia`;
+6. Tu análisis debe ser TAN PROFESIONAL que podría presentarse a un C-suite sin modificaciones
+7. Piensa como un consultor que cobra $50,000 USD por estrategia
+
+REGLAS DE FORMATO (OBLIGATORIAS):
+- Tu respuesta DEBE ser SOLO un objeto JSON válido. NADA más.
+- NO uses backticks (\`\`\`), NO uses markdown, NO agregues texto antes o después del JSON.
+- Tu respuesta debe COMENZAR con { y TERMINAR con }
+- Asegúrate de que el JSON esté completo y no truncado.
+- Usa comillas dobles para strings. Escapa comillas internas con \\"
+- NO uses comillas simples en el JSON.`;
 
 // ─── Point 1: Descripción ───
 export function promptDescription(brand: BrandIdentity): string {

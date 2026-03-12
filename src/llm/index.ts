@@ -8,6 +8,13 @@ export type { LLMProviderInterface, LLMResponse, GenerateOptions };
 
 const providers: Record<string, LLMProviderInterface> = {};
 
+// Known token limits for budget-constrained providers (auto-detected)
+const PROVIDER_MAX_TOKENS: Record<string, number> = {};
+
+export function setProviderMaxTokens(providerName: string, maxTokens: number) {
+  PROVIDER_MAX_TOKENS[providerName] = maxTokens;
+}
+
 function initProviders() {
   const claude = new ClaudeProvider();
   const gemini = new GeminiProvider();
@@ -24,14 +31,18 @@ function initProviders() {
 function isFatalProviderError(err: unknown): boolean {
   const msg = (err as any)?.message?.toLowerCase() || "";
   const status = (err as any)?.status;
-  // Credit/billing exhausted, auth invalid, account suspended
-  if (status === 400 && msg.includes("credit")) return true;
+  // Credit/billing/credential issues (400 + "cred" catches both "credit" and "credentials")
+  if (status === 400 && (msg.includes("cred") || msg.includes("billing") || msg.includes("invalid_request"))) return true;
   if (status === 401) return true;   // Invalid API key
+  if (status === 402) return true;   // Payment required (OpenRouter insufficient credits)
   if (status === 403) return true;   // Forbidden / suspended
   if (msg.includes("credit balance")) return true;
   if (msg.includes("billing")) return true;
+  if (msg.includes("insufficient")) return true;
   if (msg.includes("quota")) return true;
   if (msg.includes("exceeded") && !msg.includes("rate")) return true;
+  // Gemini fetch errors indicate fundamental issues
+  if (msg.includes("error fetching") || msg.includes("failed to fetch")) return true;
   return false;
 }
 
@@ -54,15 +65,51 @@ class FallbackProvider implements LLMProviderInterface {
 
     for (const provider of this.chain) {
       try {
-        return await provider.generate(prompt, systemPrompt, options);
+        // Adapt maxTokens to provider limits (auto-detected)
+        let adaptedOptions = options;
+        const providerLimit = PROVIDER_MAX_TOKENS[provider.name];
+        if (providerLimit && options?.maxTokens && options.maxTokens > providerLimit) {
+          adaptedOptions = { ...options, maxTokens: providerLimit };
+          console.log(`  [LLM] ${provider.name}: reduciendo max_tokens de ${options.maxTokens} a ${providerLimit}`);
+        }
+        return await provider.generate(prompt, systemPrompt, adaptedOptions);
       } catch (err) {
         lastError = err;
-        if (isFatalProviderError(err)) {
-          console.log(`  [LLM] ${provider.name} fallo (${(err as Error).message?.slice(0, 60)}), intentando siguiente proveedor...`);
-          continue;
+        const msg = (err as any)?.message?.toLowerCase() || "";
+
+        // If error is about insufficient tokens, dynamically update limit and retry
+        if (msg.includes("afford") && msg.includes("token")) {
+          const tokenMatch = msg.match(/can only afford (\d+)/);
+          if (tokenMatch) {
+            const available = parseInt(tokenMatch[1]);
+            const newLimit = Math.max(available - 200, 512);
+            // Always update — credits deplete over time
+            if (!PROVIDER_MAX_TOKENS[provider.name] || newLimit < PROVIDER_MAX_TOKENS[provider.name]) {
+              PROVIDER_MAX_TOKENS[provider.name] = newLimit;
+              console.log(`  [LLM] ${provider.name}: limite de tokens actualizado (${available} disponibles → max ${newLimit}), reintentando...`);
+              try {
+                return await provider.generate(prompt, systemPrompt, {
+                  ...options,
+                  maxTokens: newLimit,
+                });
+              } catch (retryErr) {
+                lastError = retryErr;
+                // Update again if credits depleted further
+                const retryMsg = (retryErr as any)?.message?.toLowerCase() || "";
+                const retryMatch = retryMsg.match(/can only afford (\d+)/);
+                if (retryMatch) {
+                  const retryAvailable = parseInt(retryMatch[1]);
+                  PROVIDER_MAX_TOKENS[provider.name] = Math.max(retryAvailable - 200, 512);
+                }
+              }
+            }
+          }
         }
-        // Non-fatal errors (rate limit already handled inside provider) — rethrow
-        throw err;
+
+        // Always try next provider on any error — providers already handle their own retries
+        // (e.g. Groq retries rate limits 3 times internally before throwing)
+        console.log(`  [LLM] ${provider.name} fallo (${(err as Error).message?.slice(0, 60)}), intentando siguiente proveedor...`);
+        continue;
       }
     }
 
@@ -98,7 +145,7 @@ export function getFastProvider(): LLMProviderInterface {
 }
 
 export function getResearchProvider(): LLMProviderInterface {
-  return buildFallbackChain(["claude", "gemini", "openrouter"]);
+  return buildFallbackChain(["claude", "gemini", "groq", "openrouter"]);
 }
 
 export function listAvailableProviders(): string[] {
@@ -113,4 +160,41 @@ export async function generate(
 ): Promise<LLMResponse> {
   const provider = getProvider(options?.provider);
   return provider.generate(prompt, systemPrompt, options);
+}
+
+// ─── Provider Diagnostics ───
+export async function diagnoseProviders(): Promise<Record<string, { available: boolean; working: boolean; error?: string }>> {
+  if (Object.keys(providers).length === 0) initProviders();
+
+  const results: Record<string, { available: boolean; working: boolean; error?: string }> = {};
+
+  for (const [name, provider] of Object.entries(providers)) {
+    try {
+      await provider.generate("Responde solo: OK", "Responde exactamente lo pedido.", { maxTokens: 10 });
+      results[name] = { available: true, working: true };
+      console.log(`  [Diagnostics] ${name}: OK`);
+    } catch (err) {
+      const msg = (err as Error).message?.slice(0, 100) || "unknown";
+      results[name] = { available: true, working: false, error: msg };
+      console.log(`  [Diagnostics] ${name}: FALLO - ${msg.slice(0, 60)}`);
+
+      // Auto-detect OpenRouter token limits
+      const tokenMatch = msg.toLowerCase().match(/can only afford (\d+)/);
+      if (tokenMatch) {
+        const available = parseInt(tokenMatch[1]);
+        PROVIDER_MAX_TOKENS[name] = Math.max(available - 200, 512);
+        console.log(`  [Diagnostics] ${name}: limite de tokens = ${PROVIDER_MAX_TOKENS[name]}`);
+      }
+    }
+  }
+
+  // Log unconfigured providers
+  for (const name of ["claude", "gemini", "groq", "openrouter"]) {
+    if (!providers[name]) {
+      results[name] = { available: false, working: false, error: "No API key" };
+      console.log(`  [Diagnostics] ${name}: No configurado`);
+    }
+  }
+
+  return results;
 }

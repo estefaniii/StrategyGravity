@@ -31,7 +31,10 @@ export class OpenRouterProvider implements LLMProviderInterface {
     });
 
     if (!response.ok) {
-      throw new Error(`OpenRouter API error: ${response.status} ${await response.text()}`);
+      const body = await response.text();
+      const err = new Error(`OpenRouter API error: ${response.status} ${body.slice(0, 200)}`);
+      (err as any).status = response.status;
+      throw err;
     }
 
     const data = (await response.json()) as {

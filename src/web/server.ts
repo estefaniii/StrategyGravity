@@ -280,5 +280,24 @@ export function startWebServer() {
     console.log(chalk.bold.magenta(`\n  StrategyGravity Web Server`));
     console.log(chalk.cyan(`  http://localhost:${PORT}`));
     console.log(chalk.dim(`  Ctrl+C para detener\n`));
+
+    // Run provider diagnostics in background
+    import("../llm/index.js").then(async ({ diagnoseProviders }) => {
+      console.log(chalk.cyan("  Diagnosticando proveedores LLM..."));
+      const results = await diagnoseProviders();
+      const working = Object.entries(results).filter(([_, r]) => r.working).map(([n]) => n);
+      const failing = Object.entries(results).filter(([_, r]) => r.available && !r.working).map(([n]) => n);
+
+      if (working.length > 0) {
+        console.log(chalk.green(`  Proveedores activos: ${working.join(", ")}`));
+      }
+      if (failing.length > 0) {
+        console.log(chalk.yellow(`  Proveedores con problemas: ${failing.join(", ")}`));
+      }
+      if (working.length === 0) {
+        console.log(chalk.red.bold(`  ADVERTENCIA: Ningun proveedor LLM funcional!`));
+      }
+      console.log("");
+    }).catch(() => {});
   });
 }
