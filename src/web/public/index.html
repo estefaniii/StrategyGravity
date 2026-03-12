@@ -31,6 +31,21 @@
           Historial
         </button>
       </nav>
+      <!-- Provider Status Panel -->
+      <div id="provider-panel" class="provider-panel">
+        <div class="provider-panel-header">
+          <span class="provider-panel-title">Proveedores IA</span>
+          <button class="provider-refresh-btn" onclick="refreshDiagnostics()" title="Re-diagnosticar">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          </button>
+        </div>
+        <div id="provider-list" class="provider-list">
+          <div class="provider-item loading">
+            <span class="provider-dot dot-loading"></span>
+            <span class="provider-name">Cargando...</span>
+          </div>
+        </div>
+      </div>
       <div class="sidebar-footer">
         <span class="version">v1.0 &mdash; Impulsado por IA</span>
       </div>

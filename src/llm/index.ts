@@ -163,23 +163,87 @@ export async function generate(
 }
 
 // ─── Provider Diagnostics ───
-export async function diagnoseProviders(): Promise<Record<string, { available: boolean; working: boolean; error?: string }>> {
+export interface ProviderStatus {
+  available: boolean;
+  working: boolean;
+  error?: string;
+  suggestion?: string;
+  dashboardUrl?: string;
+}
+
+const PROVIDER_DASHBOARDS: Record<string, string> = {
+  claude: "https://console.anthropic.com/settings/billing",
+  gemini: "https://aistudio.google.com/apikey",
+  groq: "https://console.groq.com/keys",
+  openrouter: "https://openrouter.ai/settings/credits",
+};
+
+function getSuggestion(name: string, error: string): string {
+  const msg = error.toLowerCase();
+
+  if (msg.includes("credit balance is too low") || msg.includes("purchase credits")) {
+    return "Tu cuenta no tiene créditos. Agrega un método de pago o compra créditos.";
+  }
+  if (msg.includes("invalid") && msg.includes("key")) {
+    return "Key inválida o revocada. Genera una nueva en el dashboard.";
+  }
+  if (msg.includes("401")) {
+    return "Autenticación fallida. Verifica que tu API key sea correcta.";
+  }
+  if (msg.includes("402") || msg.includes("insufficient")) {
+    return "Sin créditos suficientes. Agrega créditos en tu dashboard.";
+  }
+  if (msg.includes("403") || msg.includes("permission")) {
+    return "Acceso denegado. Verifica los permisos de tu API key.";
+  }
+  if (msg.includes("429") || msg.includes("rate")) {
+    return "Rate limit activo. La key funciona pero hay que espaciar las requests.";
+  }
+  if (msg.includes("fetch") || msg.includes("network") || msg.includes("enotfound")) {
+    return "Error de red. Verifica tu conexión a internet.";
+  }
+  return "Error inesperado. Revisa tu API key en el dashboard del proveedor.";
+}
+
+export async function diagnoseProviders(): Promise<Record<string, ProviderStatus>> {
   if (Object.keys(providers).length === 0) initProviders();
 
-  const results: Record<string, { available: boolean; working: boolean; error?: string }> = {};
+  const results: Record<string, ProviderStatus> = {};
 
   for (const [name, provider] of Object.entries(providers)) {
     try {
       await provider.generate("Responde solo: OK", "Responde exactamente lo pedido.", { maxTokens: 10 });
-      results[name] = { available: true, working: true };
+      results[name] = { available: true, working: true, dashboardUrl: PROVIDER_DASHBOARDS[name] };
       console.log(`  [Diagnostics] ${name}: OK`);
     } catch (err) {
-      const msg = (err as Error).message?.slice(0, 100) || "unknown";
-      results[name] = { available: true, working: false, error: msg };
-      console.log(`  [Diagnostics] ${name}: FALLO - ${msg.slice(0, 60)}`);
+      const fullMsg = (err as Error).message || "unknown";
+      const status = (err as any)?.status;
+
+      // Rate limit = working but limited (not fatal)
+      const isRateLimit = status === 429 || fullMsg.toLowerCase().includes("rate limit") || fullMsg.toLowerCase().includes("rate_limit");
+      if (isRateLimit) {
+        results[name] = {
+          available: true,
+          working: true,
+          suggestion: "Rate limit activo. Funciona pero con limites de velocidad.",
+          dashboardUrl: PROVIDER_DASHBOARDS[name],
+        };
+        console.log(`  [Diagnostics] ${name}: OK (rate limited)`);
+      } else {
+        const suggestion = getSuggestion(name, fullMsg);
+        results[name] = {
+          available: true,
+          working: false,
+          error: fullMsg,
+          suggestion,
+          dashboardUrl: PROVIDER_DASHBOARDS[name],
+        };
+        console.log(`  [Diagnostics] ${name}: FALLO - ${fullMsg.slice(0, 80)}`);
+        if (suggestion) console.log(`    → ${suggestion}`);
+      }
 
       // Auto-detect OpenRouter token limits
-      const tokenMatch = msg.toLowerCase().match(/can only afford (\d+)/);
+      const tokenMatch = fullMsg.toLowerCase().match(/can only afford (\d+)/);
       if (tokenMatch) {
         const available = parseInt(tokenMatch[1]);
         PROVIDER_MAX_TOKENS[name] = Math.max(available - 200, 512);
@@ -191,7 +255,13 @@ export async function diagnoseProviders(): Promise<Record<string, { available: b
   // Log unconfigured providers
   for (const name of ["claude", "gemini", "groq", "openrouter"]) {
     if (!providers[name]) {
-      results[name] = { available: false, working: false, error: "No API key" };
+      results[name] = {
+        available: false,
+        working: false,
+        error: "API key no configurada",
+        suggestion: `Agrega ${name.toUpperCase()}_API_KEY en tu archivo .env`,
+        dashboardUrl: PROVIDER_DASHBOARDS[name],
+      };
       console.log(`  [Diagnostics] ${name}: No configurado`);
     }
   }

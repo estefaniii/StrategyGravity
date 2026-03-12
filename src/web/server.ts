@@ -268,6 +268,27 @@ app.get("/api/pptx/download/:id", async (req, res) => {
   }
 });
 
+// ─── Provider diagnostics endpoint ───
+app.get("/api/diagnose", async (_req, res) => {
+  try {
+    const { diagnoseProviders } = await import("../llm/index.js");
+    const results = await diagnoseProviders();
+    const working = Object.entries(results).filter(([_, r]) => r.working).map(([n]) => n);
+    const failing = Object.entries(results).filter(([_, r]) => !r.working).map(([n]) => n);
+    res.json({
+      providers: results,
+      summary: {
+        working,
+        failing,
+        totalWorking: working.length,
+        totalFailing: failing.length,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
 // ─── SPA fallback (Express 5 syntax) ───
 app.get("/{*splat}", (_req, res) => {
   res.sendFile(resolve(__dirname, "public", "index.html"));

@@ -4,6 +4,93 @@ let currentStrategy = null;
 let eventSource = null;
 const sessionId = crypto.randomUUID();
 
+// ─── Provider Diagnostics Panel ───
+const PROVIDER_LABELS = {
+  claude: 'Claude',
+  gemini: 'Gemini',
+  groq: 'Groq',
+  openrouter: 'OpenRouter',
+};
+
+function renderProviderPanel(data) {
+  const list = document.getElementById('provider-list');
+  if (!list || !data?.providers) return;
+
+  const providers = data.providers;
+  const order = ['claude', 'gemini', 'groq', 'openrouter'];
+
+  list.innerHTML = order.map(name => {
+    const p = providers[name];
+    if (!p) return '';
+
+    const dotClass = p.working ? 'dot-ok' : 'dot-fail';
+    const label = PROVIDER_LABELS[name] || name;
+    const hint = p.working ? '' : (p.error ? '⚠' : '');
+    const hasLink = !p.working && p.dashboardUrl;
+
+    let tooltip = '';
+    if (!p.working) {
+      const errorText = p.error ? `<div class="tooltip-error">${escapeHtml(p.error.slice(0, 150))}</div>` : '';
+      const suggestionText = p.suggestion ? `<div class="tooltip-suggestion">${escapeHtml(p.suggestion)}</div>` : '';
+      const linkText = p.dashboardUrl ? `<a class="tooltip-link" href="${p.dashboardUrl}" target="_blank" rel="noopener">Abrir dashboard →</a>` : '';
+      tooltip = `<div class="provider-tooltip">${errorText}${suggestionText}${linkText}</div>`;
+    } else if (p.suggestion) {
+      tooltip = `<div class="provider-tooltip"><div class="tooltip-suggestion">${escapeHtml(p.suggestion)}</div></div>`;
+    }
+
+    const onClick = hasLink ? `onclick="window.open('${p.dashboardUrl}','_blank')"` : '';
+    const linkClass = hasLink ? 'has-link' : '';
+
+    return `<div class="provider-item ${linkClass}" ${onClick}>
+      <span class="provider-dot ${dotClass}"></span>
+      <span class="provider-name">${label}</span>
+      ${hint ? `<span class="provider-hint">${hint}</span>` : ''}
+      ${tooltip}
+    </div>`;
+  }).join('');
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+async function refreshDiagnostics() {
+  const btn = document.querySelector('.provider-refresh-btn');
+  if (btn) btn.classList.add('spinning');
+
+  const list = document.getElementById('provider-list');
+  if (list) {
+    list.innerHTML = '<div class="provider-item loading"><span class="provider-dot dot-loading"></span><span class="provider-name">Diagnosticando...</span></div>';
+  }
+
+  try {
+    const resp = await fetch('/api/diagnose');
+    const data = await resp.json();
+    renderProviderPanel(data);
+
+    const working = data.summary?.totalWorking || 0;
+    if (working === 0) {
+      showToast('Ningún proveedor LLM funcional', 'error');
+    } else {
+      showToast(`${working} proveedor${working > 1 ? 'es' : ''} activo${working > 1 ? 's' : ''}`, 'success');
+    }
+  } catch (err) {
+    if (list) {
+      list.innerHTML = '<div class="provider-item"><span class="provider-dot dot-fail"></span><span class="provider-name">Error al diagnosticar</span></div>';
+    }
+  } finally {
+    if (btn) btn.classList.remove('spinning');
+  }
+}
+
+// Auto-load diagnostics on page load
+document.addEventListener('DOMContentLoaded', () => {
+  // Delay to let server startup diagnostics finish first
+  setTimeout(() => refreshDiagnostics(), 2000);
+});
+
 // ─── Toast Notifications ───
 function showToast(message, type = 'success') {
   const toast = document.createElement('div');
