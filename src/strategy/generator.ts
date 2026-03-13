@@ -580,19 +580,6 @@ Retorna SOLO JSON:
 
   console.log(chalk.green.bold(`\n  Estrategia guardada con ID: ${id}`));
 
-  // Generate PPTX
-  console.log(chalk.yellow(`\n  Generando presentacion PPTX...\n`));
-  try {
-    const { generatePptx } = await import("../tools/pptx-generator.js");
-    const pptxResult = await generatePptx(strategy);
-    if (pptxResult.success) {
-      const data = pptxResult.data as Record<string, unknown>;
-      console.log(chalk.green(`  PPTX generado: ${data.filePath}`));
-      console.log(chalk.green(`  Slides: ${data.slideCount}`));
-    }
-  } catch (err) {
-    console.log(chalk.yellow(`  PPTX no generado: ${(err as Error).message?.slice(0, 80)}`));
-  }
-
+  // PPTX is generated in background by server.ts after sendComplete — not here
   return strategy;
 }

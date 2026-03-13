@@ -87,6 +87,13 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   });
 }
 
+// Background PPTX generation (non-blocking, runs after sendComplete)
+function generatePptxInBackground(strategy: MarketingStrategy): void {
+  generatePptx(strategy)
+    .then(r => r.success && console.log(`  PPTX generado en background para ID: ${strategy.id}`))
+    .catch(err => console.log(`  PPTX no generado: ${(err as Error).message?.slice(0, 80)}`));
+}
+
 // ─── Generate Strategy from URL ───
 app.post("/api/strategy/url", async (req, res) => {
   const { url, sessionId, preferences } = req.body;
@@ -129,6 +136,7 @@ app.post("/api/strategy/url", async (req, res) => {
     );
     currentStrategy = strategy;
     sendComplete(sessionId, { id: strategy.id, companyName: strategy.companyName });
+    generatePptxInBackground(strategy);
   } catch (err) {
     sendError(sessionId, (err as Error).message);
   }
@@ -173,6 +181,7 @@ app.post("/api/strategy/instagram", async (req, res) => {
     );
     currentStrategy = strategy;
     sendComplete(sessionId, { id: strategy.id, companyName: strategy.companyName });
+    generatePptxInBackground(strategy);
   } catch (err) {
     sendError(sessionId, (err as Error).message);
   }
@@ -217,6 +226,7 @@ app.post("/api/strategy/description", async (req, res) => {
     );
     currentStrategy = strategy;
     sendComplete(sessionId, { id: strategy.id, companyName: strategy.companyName });
+    generatePptxInBackground(strategy);
   } catch (err) {
     sendError(sessionId, (err as Error).message);
   }

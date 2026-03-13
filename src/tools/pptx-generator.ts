@@ -47,11 +47,26 @@ function isLightColor(hex: string): boolean {
 
 export async function generatePptx(strategy: MarketingStrategy): Promise<ToolResult> {
   try {
-    // ─── Fetch images in parallel ───
-    const [companyLogo, competitorLogos] = await Promise.all([
-      fetchCompanyLogo(strategy.brandDesign?.identity?.website),
-      fetchCompetitorLogos(strategy.competitors || []),
-    ]);
+    // ─── Fetch images in parallel with 10s global timeout ───
+    const IMAGE_TIMEOUT = 10_000;
+    let companyLogo: string | null = null;
+    let competitorLogos = new Map<string, string>();
+    try {
+      const imagePromise = Promise.all([
+        fetchCompanyLogo(strategy.brandDesign?.identity?.website),
+        fetchCompetitorLogos(strategy.competitors || []),
+      ]);
+      const result = await Promise.race([
+        imagePromise,
+        new Promise<[null, Map<string, string>]>(resolve =>
+          setTimeout(() => { console.log("  [Images] Timeout global de imagenes (10s), continuando sin logos"); resolve([null, new Map()]); }, IMAGE_TIMEOUT)
+        ),
+      ]);
+      companyLogo = result[0];
+      competitorLogos = result[1];
+    } catch {
+      console.log("  [Images] Error descargando imagenes, continuando sin logos");
+    }
 
     const pptx = new PptxGenJS();
     const colors = strategy.brandDesign?.identity?.colors || { primary: "#1A1A2E", secondary: "#16213E", accent: "#E94560" };
