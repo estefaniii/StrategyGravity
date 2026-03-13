@@ -6,6 +6,12 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+// Models ordered by quality: best first, fallback to faster model with higher rate limits
+const GROQ_MODELS = [
+  "llama-3.3-70b-versatile",   // Better quality, stricter free-tier limits (30 RPM, 6000 TPM)
+  "llama-3.1-8b-instant",      // Lower quality, much higher limits (30 RPM, 131072 TPM)
+];
+
 export class GroqProvider implements LLMProviderInterface {
   name = "groq";
   private client: Groq | null = null;
@@ -27,36 +33,46 @@ export class GroqProvider implements LLMProviderInterface {
     if (systemPrompt) messages.push({ role: "system", content: systemPrompt });
     messages.push({ role: "user", content: prompt });
 
-    const maxRetries = 3;
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        const response = await this.client.chat.completions.create({
-          model: "llama-3.3-70b-versatile",
-          messages,
-          max_tokens: options?.maxTokens ?? 8192,
-          temperature: options?.temperature ?? 0.7,
-        });
+    let lastError: any;
 
-        const text = response.choices[0]?.message?.content ?? "";
-        return {
-          text,
-          model: "llama-3.3-70b-versatile",
-          usage: response.usage
-            ? { inputTokens: response.usage.prompt_tokens, outputTokens: response.usage.completion_tokens }
-            : undefined,
-        };
-      } catch (err: any) {
-        const isRateLimit = err?.status === 429 || err?.message?.includes("rate_limit") || err?.message?.includes("Rate limit");
-        if (isRateLimit && attempt < maxRetries) {
-          const waitMs = 15000 * (attempt + 1);
-          console.log(`  [Groq] Rate limit, esperando ${Math.round(waitMs / 1000)}s (intento ${attempt + 1}/${maxRetries})...`);
-          await sleep(waitMs);
-          continue;
+    for (const model of GROQ_MODELS) {
+      const maxRetries = 2;
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+          const response = await this.client.chat.completions.create({
+            model,
+            messages,
+            max_tokens: options?.maxTokens ?? 8192,
+            temperature: options?.temperature ?? 0.7,
+          });
+
+          const text = response.choices[0]?.message?.content ?? "";
+          return {
+            text,
+            model,
+            usage: response.usage
+              ? { inputTokens: response.usage.prompt_tokens, outputTokens: response.usage.completion_tokens }
+              : undefined,
+          };
+        } catch (err: any) {
+          lastError = err;
+          const isRateLimit = err?.status === 429 || err?.message?.includes("rate_limit") || err?.message?.includes("Rate limit");
+          if (isRateLimit && attempt < maxRetries) {
+            const waitMs = 5000 * (attempt + 1);
+            console.log(`  [Groq] Rate limit (${model}), esperando ${Math.round(waitMs / 1000)}s (intento ${attempt + 1}/${maxRetries})...`);
+            await sleep(waitMs);
+            continue;
+          }
+          // On rate limit after max retries, break to try next model
+          if (isRateLimit) {
+            console.log(`  [Groq] ${model} agotado por rate limit, probando modelo alternativo...`);
+            break;
+          }
+          throw err; // Non-rate-limit errors throw immediately
         }
-        throw err;
       }
     }
 
-    throw new Error("Max retries exceeded for Groq API");
+    throw lastError || new Error("Max retries exceeded for Groq API");
   }
 }

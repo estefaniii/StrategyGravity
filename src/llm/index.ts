@@ -14,7 +14,7 @@ const PROVIDER_MAX_TOKENS: Record<string, number> = {};
 // Provider cooldown: skip providers that fail consistently to avoid wasting time on retries
 const PROVIDER_COOLDOWNS: Record<string, { until: number; consecutiveFailures: number }> = {};
 const COOLDOWN_THRESHOLD = 2;      // Failures before cooldown kicks in
-const COOLDOWN_DURATION = 60_000;   // 60 seconds cooldown (short enough to retry soon)
+const COOLDOWN_DURATION = 30_000;   // 30 seconds cooldown (faster recovery for free tiers)
 
 function recordProviderFailure(name: string): void {
   const info = PROVIDER_COOLDOWNS[name] || { until: 0, consecutiveFailures: 0 };
@@ -44,6 +44,12 @@ function isProviderInCooldown(name: string): boolean {
 
 export function setProviderMaxTokens(providerName: string, maxTokens: number) {
   PROVIDER_MAX_TOKENS[providerName] = maxTokens;
+}
+
+export function resetAllCooldowns(): void {
+  for (const name of Object.keys(PROVIDER_COOLDOWNS)) {
+    PROVIDER_COOLDOWNS[name] = { until: 0, consecutiveFailures: 0 };
+  }
 }
 
 function initProviders() {
@@ -156,7 +162,10 @@ class FallbackProvider implements LLMProviderInterface {
       }
     }
 
-    throw lastError || new Error("Todos los proveedores LLM fallaron");
+    throw lastError || new Error(
+      "Todos los proveedores de IA fallaron. Esto puede deberse a limites de uso o creditos agotados. " +
+      "Por favor espera 1-2 minutos e intenta nuevamente, o verifica tus API keys en el panel de proveedores."
+    );
   }
 }
 

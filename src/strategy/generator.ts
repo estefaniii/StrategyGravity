@@ -75,6 +75,12 @@ function log(step: string, msg: string) {
   console.log(chalk.cyan(`  [${step}]`) + ` ${msg}`);
 }
 
+// Delay between LLM steps to reduce rate limit pressure on free-tier providers
+const STEP_DELAY_MS = 2000;
+function paceDelay(): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, STEP_DELAY_MS));
+}
+
 /**
  * Generate JSON from LLM with automatic retry on parse failure.
  * On first failure, retries once with a "fix your JSON" correction prompt.
@@ -140,6 +146,7 @@ export async function generateStrategy(
     prompts.STRATEGY_SYSTEM_PROMPT,
     { maxTokens: 2048, label: "1/12 Descripcion" }
   );
+  await paceDelay();
 
   // ─── Services (needed early) ───
   log("prep", "Definiendo servicios...");
@@ -148,6 +155,7 @@ export async function generateStrategy(
     prompts.STRATEGY_SYSTEM_PROMPT,
     { maxTokens: 2048, label: "prep Servicios" }
   );
+  await paceDelay();
 
   // ─── Point 2: Competitor Research (REAL web search + scraping) ───
   emit(2, TOTAL, "Buscando y analizando competidores reales...");
@@ -252,6 +260,7 @@ Retorna SOLO JSON:
   }
 
   log("2/12", `${competitors.length} competidores analizados`);
+  await paceDelay();
 
   // ─── Point 3: Comparative Analysis ───
   emit(3, TOTAL, "Generando analisis comparativo...");
@@ -268,6 +277,8 @@ Retorna SOLO JSON:
     log("3/12", `Analisis comparativo parcial: ${(err as Error).message?.slice(0, 50)}`);
     comparativeAnalysis = `Análisis comparativo del mercado de ${brand.industry} en ${brand.location}. Se identificaron ${competitors.length} competidores principales. Se recomienda enfocarse en diferenciación a través de calidad de servicio y presencia digital.`;
   }
+
+  await paceDelay();
 
   // ─── Point 4: Keyword Research (with web grounding) ───
   emit(4, TOTAL, "Investigando keywords estrategicas...");
@@ -318,6 +329,7 @@ Retorna SOLO JSON:
     }
   }
   log("4/12", `${keywordGroups.length} grupos de keywords`);
+  await paceDelay();
 
   // ─── Point 5: Strategic Conclusions ───
   emit(5, TOTAL, "Formulando conclusiones estrategicas...");
@@ -340,6 +352,8 @@ Retorna SOLO JSON:
     ];
   }
 
+  await paceDelay();
+
   // ─── Point 6: Differentiation ───
   emit(6, TOTAL, "Proponiendo estrategias de diferenciacion...");
   log("6/12", "Diferenciacion...");
@@ -360,6 +374,8 @@ Retorna SOLO JSON:
       "Programa de fidelización y comunidad de marca activa.",
     ];
   }
+
+  await paceDelay();
 
   // ─── Point 7: Brand Design ───
   emit(7, TOTAL, "Definiendo diseno de marca...");
@@ -386,6 +402,8 @@ Retorna SOLO JSON:
     log("7/12", `Diseno parcial: ${(err as Error).message?.slice(0, 50)}`);
   }
 
+  await paceDelay();
+
   // ─── Point 8: Content Strategy ───
   emit(8, TOTAL, "Creando estrategia de contenido...");
   log("8/12", "Estrategia de contenido...");
@@ -407,6 +425,8 @@ Retorna SOLO JSON:
     log("8/12", `Estrategia contenido parcial: ${(err as Error).message?.slice(0, 50)}`);
   }
 
+  await paceDelay();
+
   // ─── Point 9: Content Pillars ───
   emit(9, TOTAL, "Definiendo pilares de contenido...");
   log("9/12", "Pilares de contenido...");
@@ -426,6 +446,8 @@ Retorna SOLO JSON:
   } catch (err) {
     log("9/12", `Pilares parciales: ${(err as Error).message?.slice(0, 50)}`);
   }
+
+  await paceDelay();
 
   // ─── Point 10: Content Grid ───
   emit(10, TOTAL, "Armando grilla de contenido semanal...");
@@ -450,6 +472,8 @@ Retorna SOLO JSON:
     log("10/12", `Grilla parcial: ${(err as Error).message?.slice(0, 50)}`);
   }
 
+  await paceDelay();
+
   // ─── Point 11: KPIs ───
   emit(11, TOTAL, "Definiendo KPIs...");
   log("11/12", "KPIs...");
@@ -470,6 +494,8 @@ Retorna SOLO JSON:
       { category: "Marca y Engagement", metric: "Engagement rate", description: "Interacciones en redes sociales", target: "4-6%" },
     ];
   }
+
+  await paceDelay();
 
   // ─── Point 12: Timeline + Conclusions ───
   emit(12, TOTAL, "Creando cronograma y conclusiones finales...");

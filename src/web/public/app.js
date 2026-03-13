@@ -250,11 +250,6 @@ async function submitQuestionnaire() {
   } catch (err) {
     showError(err.message);
   }
-
-  // Clear pending state
-  pendingStrategyType = null;
-  pendingStrategyBody = {};
-  pendingStrategyEndpoint = '';
 }
 
 // ─── Sidebar Toggle (Mobile) ───
@@ -274,39 +269,61 @@ function closeSidebar() {
   document.body.classList.remove('sidebar-open');
 }
 
-// ─── SSE Connection ───
+// ─── SSE Connection with auto-reconnect and timeout ───
+let sseReconnectAttempts = 0;
+const SSE_MAX_RECONNECTS = 3;
+const SSE_RECONNECT_DELAY = 3000;
+let generationTimeout = null;
+const GENERATION_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+
+const stepLabels = [
+  'Descripción ejecutiva',
+  'Investigación de competidores',
+  'Análisis comparativo',
+  'Keywords estratégicas',
+  'Conclusiones estratégicas',
+  'Propuestas de diferenciación',
+  'Servicios',
+  'Estrategia de contenido',
+  'Pilares de contenido',
+  'Grilla de contenido',
+  'KPIs',
+  'Cronograma y conclusiones'
+];
+
 function connectSSE() {
   if (eventSource) eventSource.close();
+  sseReconnectAttempts = 0;
   eventSource = new EventSource(`/api/progress/${sessionId}`);
 
-  const stepsContainer = document.getElementById('progress-steps');
-  const stepLabels = [
-    'Descripción ejecutiva',
-    'Investigación de competidores',
-    'Análisis comparativo',
-    'Keywords estratégicas',
-    'Conclusiones estratégicas',
-    'Propuestas de diferenciación',
-    'Servicios',
-    'Estrategia de contenido',
-    'Pilares de contenido',
-    'Grilla de contenido',
-    'KPIs',
-    'Cronograma y conclusiones'
-  ];
+  // Set overall generation timeout
+  clearTimeout(generationTimeout);
+  generationTimeout = setTimeout(() => {
+    if (eventSource) eventSource.close();
+    showError('La generación está tomando demasiado tiempo. Por favor intenta nuevamente.');
+  }, GENERATION_TIMEOUT_MS);
 
+  const stepsContainer = document.getElementById('progress-steps');
   stepsContainer.innerHTML = stepLabels.map((label, i) =>
     `<div class="step-item" id="step-${i+1}"><span class="step-dot"></span>${i+1}. ${label}</div>`
   ).join('');
 
   eventSource.onmessage = (event) => {
     const data = JSON.parse(event.data);
+    sseReconnectAttempts = 0; // Reset on successful message
 
     if (data.type === 'progress') {
       const pct = Math.round((data.step / data.total) * 100);
       document.getElementById('progress-percent').textContent = `${pct}%`;
       document.getElementById('progress-fill').style.width = `${pct}%`;
       document.getElementById('progress-message').textContent = data.message;
+
+      // Reset timeout on each progress update
+      clearTimeout(generationTimeout);
+      generationTimeout = setTimeout(() => {
+        if (eventSource) eventSource.close();
+        showError('La generación está tomando demasiado tiempo. Por favor intenta nuevamente.');
+      }, GENERATION_TIMEOUT_MS);
 
       for (let i = 1; i <= data.total; i++) {
         const el = document.getElementById(`step-${i}`);
@@ -318,6 +335,7 @@ function connectSSE() {
     }
 
     if (data.type === 'complete') {
+      clearTimeout(generationTimeout);
       document.getElementById('progress-percent').textContent = '100%';
       document.getElementById('progress-fill').style.width = '100%';
       document.getElementById('progress-message').textContent = '¡Estrategia completada!';
@@ -329,6 +347,11 @@ function connectSSE() {
 
       showToast('¡Estrategia generada exitosamente!');
 
+      // Clear pending data on success
+      pendingStrategyType = null;
+      pendingStrategyBody = {};
+      pendingStrategyEndpoint = '';
+
       setTimeout(() => {
         document.getElementById('progress-section').classList.add('hidden');
         loadStrategy(data.data.id);
@@ -339,16 +362,63 @@ function connectSSE() {
     }
 
     if (data.type === 'error') {
+      clearTimeout(generationTimeout);
       showError(data.error);
       showToast(data.error, 'error');
       eventSource.close();
-      document.querySelectorAll('.btn-primary').forEach(b => b.disabled = false);
     }
   };
 
   eventSource.onerror = () => {
-    console.log('Conexión SSE perdida, reconectando automáticamente');
+    sseReconnectAttempts++;
+    console.log(`SSE error, intento de reconexion ${sseReconnectAttempts}/${SSE_MAX_RECONNECTS}`);
+
+    if (sseReconnectAttempts <= SSE_MAX_RECONNECTS) {
+      eventSource.close();
+      document.getElementById('progress-message').textContent =
+        `Reconectando... (intento ${sseReconnectAttempts}/${SSE_MAX_RECONNECTS})`;
+      setTimeout(() => connectSSE(), SSE_RECONNECT_DELAY * sseReconnectAttempts);
+    } else {
+      eventSource.close();
+      clearTimeout(generationTimeout);
+      showError('Se perdió la conexión con el servidor. La generación puede seguir en proceso — recarga la página en unos minutos.');
+    }
   };
+}
+
+function showRetryButton() {
+  // Only add if not already present
+  if (document.getElementById('retry-btn-container')) return;
+  const progressSteps = document.getElementById('progress-steps');
+  const retryHtml = `
+    <div id="retry-btn-container" style="text-align:center;margin-top:20px;display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
+      <button class="btn-primary" onclick="retryGeneration()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="23 4 23 10 17 10"/>
+          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+        </svg>
+        Reintentar
+      </button>
+      <button class="btn-secondary" onclick="newStrategy()">Volver al inicio</button>
+    </div>
+  `;
+  progressSteps.insertAdjacentHTML('beforeend', retryHtml);
+}
+
+function retryGeneration() {
+  if (!pendingStrategyEndpoint) {
+    newStrategy();
+    return;
+  }
+  // Reset UI
+  document.getElementById('progress-title').textContent = 'Reintentando...';
+  document.getElementById('progress-percent').textContent = '0%';
+  document.getElementById('progress-fill').style.width = '0%';
+  document.getElementById('progress-message').textContent = 'Reconectando con el servidor...';
+  const retryContainer = document.getElementById('retry-btn-container');
+  if (retryContainer) retryContainer.remove();
+  // Re-submit with same data
+  submitQuestionnaire();
 }
 
 function showError(msg) {
@@ -356,6 +426,7 @@ function showError(msg) {
   document.getElementById('progress-message').textContent = msg;
   document.getElementById('progress-fill').style.width = '0%';
   document.querySelectorAll('.btn-primary').forEach(b => b.disabled = false);
+  showRetryButton();
 }
 
 // ─── Load Strategy ───

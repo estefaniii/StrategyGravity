@@ -1,10 +1,16 @@
 import { env } from "../config/env.js";
 import type { LLMProviderInterface, LLMResponse, GenerateOptions } from "./provider.js";
 
-// Ordered by cost: cheapest first. Falls back through models on credit issues.
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+// Ordered by cost: free tier first, then paid models as fallback.
 const OPENROUTER_MODELS = [
+  "google/gemini-2.0-flash-exp:free",      // Free tier on OpenRouter (no credits needed)
+  "meta-llama/llama-3.3-70b-instruct:free", // Free tier on OpenRouter (no credits needed)
   "google/gemini-2.0-flash-001",           // Very cheap (~$0.10/M tokens)
-  "meta-llama/llama-3.3-70b-instruct",     // Free/very cheap
+  "meta-llama/llama-3.3-70b-instruct",     // Cheap
   "anthropic/claude-sonnet-4",             // Premium (fallback)
 ];
 
@@ -49,6 +55,37 @@ export class OpenRouterProvider implements LLMProviderInterface {
           // If it's a credit/model issue, try next cheaper model
           if (response.status === 402 || msg.includes("insufficient") || msg.includes("afford")) {
             console.log(`  [OpenRouter] ${model}: sin creditos suficientes, probando siguiente modelo...`);
+            continue;
+          }
+
+          // Rate limit: wait 5s and retry once, then try next model
+          if (response.status === 429) {
+            console.log(`  [OpenRouter] ${model}: rate limit, esperando 5s...`);
+            await sleep(5000);
+            try {
+              const retryResponse = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
+                  "Content-Type": "application/json",
+                  "X-Title": "StrategyGravity",
+                },
+                body: JSON.stringify({ model, messages, max_tokens: options?.maxTokens ?? 8192, temperature: options?.temperature ?? 0.7 }),
+              });
+              if (retryResponse.ok) {
+                const retryData = (await retryResponse.json()) as {
+                  choices: Array<{ message: { content: string } }>;
+                  model: string;
+                  usage?: { prompt_tokens: number; completion_tokens: number };
+                };
+                return {
+                  text: retryData.choices[0]?.message?.content ?? "",
+                  model: retryData.model || model,
+                  usage: retryData.usage ? { inputTokens: retryData.usage.prompt_tokens, outputTokens: retryData.usage.completion_tokens } : undefined,
+                };
+              }
+            } catch { /* retry failed, fall through to next model */ }
+            console.log(`  [OpenRouter] ${model}: rate limit persistente, probando siguiente modelo...`);
             continue;
           }
 

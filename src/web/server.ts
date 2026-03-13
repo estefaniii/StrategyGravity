@@ -36,7 +36,16 @@ app.get("/api/progress/:sessionId", (req, res) => {
   });
   res.write("data: {\"type\":\"connected\"}\n\n");
   sseClients.set(sessionId, res);
-  req.on("close", () => sseClients.delete(sessionId));
+
+  // Keep-alive: send SSE comment every 15s to prevent mobile browsers from closing connection
+  const keepAlive = setInterval(() => {
+    try { res.write(": keepalive\n\n"); } catch { clearInterval(keepAlive); }
+  }, 15000);
+
+  req.on("close", () => {
+    clearInterval(keepAlive);
+    sseClients.delete(sessionId);
+  });
 });
 
 function sendProgress(sessionId: string, step: number, total: number, message: string) {
@@ -56,8 +65,26 @@ function sendComplete(sessionId: string, data: unknown) {
 function sendError(sessionId: string, error: string) {
   const client = sseClients.get(sessionId);
   if (client) {
-    client.write(`data: ${JSON.stringify({ type: "error", error })}\n\n`);
+    try {
+      client.write(`data: ${JSON.stringify({ type: "error", error })}\n\n`);
+    } catch (e) {
+      console.log(`  [SSE] Could not send error to ${sessionId}: ${(e as Error).message}`);
+    }
   }
+}
+
+// Timeout wrapper for generation endpoints (10 minutes max)
+const GENERATION_TIMEOUT = 10 * 60 * 1000;
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error("Timeout: la generacion excedio el tiempo maximo. Por favor intenta nuevamente."));
+    }, ms);
+    promise.then(
+      (val) => { clearTimeout(timer); resolve(val); },
+      (err) => { clearTimeout(timer); reject(err); }
+    );
+  });
 }
 
 // ─── Generate Strategy from URL ───
@@ -93,10 +120,13 @@ app.post("/api/strategy/url", async (req, res) => {
 
     res.json({ status: "generating", companyName: brand.companyName });
 
-    // Generate strategy asynchronously
-    const strategy = await generateStrategy(brand, (step, total, msg) => {
-      sendProgress(sessionId, step, total, msg);
-    });
+    // Generate strategy asynchronously with timeout
+    const strategy = await withTimeout(
+      generateStrategy(brand, (step, total, msg) => {
+        sendProgress(sessionId, step, total, msg);
+      }),
+      GENERATION_TIMEOUT
+    );
     currentStrategy = strategy;
     sendComplete(sessionId, { id: strategy.id, companyName: strategy.companyName });
   } catch (err) {
@@ -135,9 +165,12 @@ app.post("/api/strategy/instagram", async (req, res) => {
 
     res.json({ status: "generating", companyName: brand.companyName });
 
-    const strategy = await generateStrategy(brand, (step, total, msg) => {
-      sendProgress(sessionId, step, total, msg);
-    });
+    const strategy = await withTimeout(
+      generateStrategy(brand, (step, total, msg) => {
+        sendProgress(sessionId, step, total, msg);
+      }),
+      GENERATION_TIMEOUT
+    );
     currentStrategy = strategy;
     sendComplete(sessionId, { id: strategy.id, companyName: strategy.companyName });
   } catch (err) {
@@ -176,9 +209,12 @@ app.post("/api/strategy/description", async (req, res) => {
 
     res.json({ status: "generating", companyName: brand.companyName });
 
-    const strategy = await generateStrategy(brand, (step, total, msg) => {
-      sendProgress(sessionId, step, total, msg);
-    });
+    const strategy = await withTimeout(
+      generateStrategy(brand, (step, total, msg) => {
+        sendProgress(sessionId, step, total, msg);
+      }),
+      GENERATION_TIMEOUT
+    );
     currentStrategy = strategy;
     sendComplete(sessionId, { id: strategy.id, companyName: strategy.companyName });
   } catch (err) {
