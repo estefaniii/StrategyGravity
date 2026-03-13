@@ -287,7 +287,7 @@ function connectSSE() {
     'Keywords estratégicas',
     'Conclusiones estratégicas',
     'Propuestas de diferenciación',
-    'Diseño de marca',
+    'Servicios',
     'Estrategia de contenido',
     'Pilares de contenido',
     'Grilla de contenido',
@@ -430,7 +430,7 @@ function renderStrategy(s) {
     ${renderSection(4, 'Keywords Estratégicas', renderKeywords(s))}
     ${renderSection(5, 'Conclusiones Estratégicas', renderConclusions(s))}
     ${renderSection(6, 'Propuestas de Diferenciación', renderDifferentiation(s))}
-    ${renderSection(7, 'Servicios y Diseño de Marca', renderBrand(s))}
+    ${renderSection(7, 'Servicios', renderBrand(s))}
     ${renderSection(8, 'Estrategia de Contenido', renderContentStrategy(s))}
     ${renderSection(9, 'Pilares de Contenido', renderPillars(s))}
     ${renderSection(10, 'Grilla de Contenido', renderGrid(s))}
