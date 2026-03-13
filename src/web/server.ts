@@ -268,22 +268,52 @@ app.get("/api/pptx/download/:id", async (req, res) => {
   }
 });
 
-// ─── Provider diagnostics endpoint ───
-app.get("/api/diagnose", async (_req, res) => {
+// ─── Provider diagnostics (singleton pattern to avoid double rate-limit hits) ───
+let cachedDiagnostics: Record<string, unknown> | null = null;
+let diagnosticsTimestamp = 0;
+let activeDiagnosticsPromise: Promise<Record<string, unknown>> | null = null;
+const DIAGNOSTICS_CACHE_TTL = 120_000; // 2 minutes cache
+
+async function runDiagnostics(): Promise<Record<string, unknown>> {
+  const { diagnoseProviders } = await import("../llm/index.js");
+  const results = await diagnoseProviders();
+  const working = Object.entries(results).filter(([_, r]) => r.working).map(([n]) => n);
+  const failing = Object.entries(results).filter(([_, r]) => !r.working).map(([n]) => n);
+  const response = {
+    providers: results,
+    summary: { working, failing, totalWorking: working.length, totalFailing: failing.length },
+  };
+  cachedDiagnostics = response;
+  diagnosticsTimestamp = Date.now();
+  return response;
+}
+
+async function getDiagnostics(forceRefresh = false): Promise<Record<string, unknown>> {
+  const now = Date.now();
+
+  // Return cached if fresh
+  if (!forceRefresh && cachedDiagnostics && (now - diagnosticsTimestamp) < DIAGNOSTICS_CACHE_TTL) {
+    return cachedDiagnostics;
+  }
+
+  // If a diagnosis is already running, wait for it instead of starting a new one
+  if (activeDiagnosticsPromise) {
+    return activeDiagnosticsPromise;
+  }
+
+  // Start a new diagnosis
+  activeDiagnosticsPromise = runDiagnostics().finally(() => {
+    activeDiagnosticsPromise = null;
+  });
+
+  return activeDiagnosticsPromise;
+}
+
+app.get("/api/diagnose", async (req, res) => {
+  const forceRefresh = req.query.refresh === "true";
   try {
-    const { diagnoseProviders } = await import("../llm/index.js");
-    const results = await diagnoseProviders();
-    const working = Object.entries(results).filter(([_, r]) => r.working).map(([n]) => n);
-    const failing = Object.entries(results).filter(([_, r]) => !r.working).map(([n]) => n);
-    res.json({
-      providers: results,
-      summary: {
-        working,
-        failing,
-        totalWorking: working.length,
-        totalFailing: failing.length,
-      },
-    });
+    const result = await getDiagnostics(forceRefresh);
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
@@ -302,12 +332,11 @@ export function startWebServer() {
     console.log(chalk.cyan(`  http://localhost:${PORT}`));
     console.log(chalk.dim(`  Ctrl+C para detener\n`));
 
-    // Run provider diagnostics in background
-    import("../llm/index.js").then(async ({ diagnoseProviders }) => {
-      console.log(chalk.cyan("  Diagnosticando proveedores LLM..."));
-      const results = await diagnoseProviders();
-      const working = Object.entries(results).filter(([_, r]) => r.working).map(([n]) => n);
-      const failing = Object.entries(results).filter(([_, r]) => r.available && !r.working).map(([n]) => n);
+    // Run provider diagnostics via singleton (frontend /api/diagnose will reuse this)
+    console.log(chalk.cyan("  Diagnosticando proveedores LLM..."));
+    getDiagnostics(true).then((result: any) => {
+      const working = result.summary?.working || [];
+      const failing = result.summary?.failing || [];
 
       if (working.length > 0) {
         console.log(chalk.green(`  Proveedores activos: ${working.join(", ")}`));

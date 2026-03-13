@@ -56,7 +56,7 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
-async function refreshDiagnostics() {
+async function refreshDiagnostics(forceRefresh = false) {
   const btn = document.querySelector('.provider-refresh-btn');
   if (btn) btn.classList.add('spinning');
 
@@ -66,7 +66,8 @@ async function refreshDiagnostics() {
   }
 
   try {
-    const resp = await fetch('/api/diagnose');
+    const url = forceRefresh ? '/api/diagnose?refresh=true' : '/api/diagnose';
+    const resp = await fetch(url);
     const data = await resp.json();
     renderProviderPanel(data);
 
@@ -85,10 +86,9 @@ async function refreshDiagnostics() {
   }
 }
 
-// Auto-load diagnostics on page load
+// Auto-load diagnostics on page load (uses cached results from server startup)
 document.addEventListener('DOMContentLoaded', () => {
-  // Delay to let server startup diagnostics finish first
-  setTimeout(() => refreshDiagnostics(), 2000);
+  setTimeout(() => refreshDiagnostics(false), 3000);
 });
 
 // ─── Toast Notifications ───

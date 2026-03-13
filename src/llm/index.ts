@@ -11,6 +11,37 @@ const providers: Record<string, LLMProviderInterface> = {};
 // Known token limits for budget-constrained providers (auto-detected)
 const PROVIDER_MAX_TOKENS: Record<string, number> = {};
 
+// Provider cooldown: skip providers that fail consistently to avoid wasting time on retries
+const PROVIDER_COOLDOWNS: Record<string, { until: number; consecutiveFailures: number }> = {};
+const COOLDOWN_THRESHOLD = 2;      // Failures before cooldown kicks in
+const COOLDOWN_DURATION = 60_000;   // 60 seconds cooldown (short enough to retry soon)
+
+function recordProviderFailure(name: string): void {
+  const info = PROVIDER_COOLDOWNS[name] || { until: 0, consecutiveFailures: 0 };
+  info.consecutiveFailures++;
+  if (info.consecutiveFailures >= COOLDOWN_THRESHOLD) {
+    info.until = Date.now() + COOLDOWN_DURATION;
+    console.log(`  [LLM] ${name}: en cooldown por ${COOLDOWN_DURATION / 1000}s (${info.consecutiveFailures} fallos consecutivos)`);
+  }
+  PROVIDER_COOLDOWNS[name] = info;
+}
+
+function recordProviderSuccess(name: string): void {
+  PROVIDER_COOLDOWNS[name] = { until: 0, consecutiveFailures: 0 };
+}
+
+function isProviderInCooldown(name: string): boolean {
+  const info = PROVIDER_COOLDOWNS[name];
+  if (!info) return false;
+  if (info.until > Date.now()) return true;
+  // Cooldown expired — reset
+  if (info.until > 0) {
+    info.until = 0;
+    info.consecutiveFailures = 0;
+  }
+  return false;
+}
+
 export function setProviderMaxTokens(providerName: string, maxTokens: number) {
   PROVIDER_MAX_TOKENS[providerName] = maxTokens;
 }
@@ -64,6 +95,11 @@ class FallbackProvider implements LLMProviderInterface {
     let lastError: unknown;
 
     for (const provider of this.chain) {
+      // Skip providers in cooldown (recently failed repeatedly)
+      if (isProviderInCooldown(provider.name)) {
+        continue;
+      }
+
       try {
         // Adapt maxTokens to provider limits (auto-detected)
         let adaptedOptions = options;
@@ -72,7 +108,9 @@ class FallbackProvider implements LLMProviderInterface {
           adaptedOptions = { ...options, maxTokens: providerLimit };
           console.log(`  [LLM] ${provider.name}: reduciendo max_tokens de ${options.maxTokens} a ${providerLimit}`);
         }
-        return await provider.generate(prompt, systemPrompt, adaptedOptions);
+        const result = await provider.generate(prompt, systemPrompt, adaptedOptions);
+        recordProviderSuccess(provider.name);
+        return result;
       } catch (err) {
         lastError = err;
         const msg = (err as any)?.message?.toLowerCase() || "";
@@ -88,10 +126,12 @@ class FallbackProvider implements LLMProviderInterface {
               PROVIDER_MAX_TOKENS[provider.name] = newLimit;
               console.log(`  [LLM] ${provider.name}: limite de tokens actualizado (${available} disponibles → max ${newLimit}), reintentando...`);
               try {
-                return await provider.generate(prompt, systemPrompt, {
+                const result = await provider.generate(prompt, systemPrompt, {
                   ...options,
                   maxTokens: newLimit,
                 });
+                recordProviderSuccess(provider.name);
+                return result;
               } catch (retryErr) {
                 lastError = retryErr;
                 // Update again if credits depleted further
@@ -105,6 +145,9 @@ class FallbackProvider implements LLMProviderInterface {
             }
           }
         }
+
+        // Record failure for cooldown tracking
+        recordProviderFailure(provider.name);
 
         // Always try next provider on any error — providers already handle their own retries
         // (e.g. Groq retries rate limits 3 times internally before throwing)
@@ -207,6 +250,11 @@ function getSuggestion(name: string, error: string): string {
 
 export async function diagnoseProviders(): Promise<Record<string, ProviderStatus>> {
   if (Object.keys(providers).length === 0) initProviders();
+
+  // Reset cooldowns — diagnostics tests each provider fresh
+  for (const name of Object.keys(PROVIDER_COOLDOWNS)) {
+    delete PROVIDER_COOLDOWNS[name];
+  }
 
   const results: Record<string, ProviderStatus> = {};
 
