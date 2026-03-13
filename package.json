@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "dev:web": "tsx src/index.ts --web",
-    "build": "tsc",
+    "build": "tsc && cp -r src/web/public dist/web/public",
     "start": "node dist/index.js",
     "start:web": "node dist/index.js --web",
     "clean": "rm -rf dist"

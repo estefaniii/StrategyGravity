@@ -3,6 +3,9 @@ dist/
 .env
 *.db
 *.db-journal
+*.db-shm
+*.db-wal
+output/
 service-account.json
 *.log
 .DS_Store

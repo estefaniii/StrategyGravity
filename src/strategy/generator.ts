@@ -393,6 +393,7 @@ Retorna SOLO JSON:
     targetAudience: ["Público general interesado en " + brand.industry],
     painPoints: ["Falta de opciones de calidad", "Desconocimiento de la marca"],
     channels: ["Instagram", "Facebook", "Google My Business", "TikTok"],
+    focusAreas: ["Branding", "Contenido educativo", "Engagement en redes"],
     tone: "Profesional pero cercano, informativo y aspiracional.",
   };
   try {

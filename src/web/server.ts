@@ -327,7 +327,7 @@ app.get("/{*splat}", (_req, res) => {
 // ─── Start server ───
 export function startWebServer() {
   initDatabase();
-  app.listen(PORT, () => {
+  app.listen(PORT, "0.0.0.0", () => {
     console.log(chalk.bold.magenta(`\n  StrategyGravity Web Server`));
     console.log(chalk.cyan(`  http://localhost:${PORT}`));
     console.log(chalk.dim(`  Ctrl+C para detener\n`));
