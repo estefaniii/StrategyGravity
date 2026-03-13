@@ -1,6 +1,7 @@
 import express from "express";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
+import { existsSync, createReadStream } from "fs";
 import { initDatabase } from "../core/memory.js";
 import { extractBrandFromUrl, extractBrandFromInstagram, extractBrandFromDescription, setAutoConfirm } from "../tools/brand-extractor.js";
 
@@ -8,7 +9,7 @@ import { extractBrandFromUrl, extractBrandFromInstagram, extractBrandFromDescrip
 setAutoConfirm(true);
 import { generateStrategy } from "../strategy/generator.js";
 import { generatePptx } from "../tools/pptx-generator.js";
-import { getLatestStrategy, getStrategy, listStrategies } from "../core/memory.js";
+import { getLatestStrategy, getStrategy, listStrategies, deleteStrategy } from "../core/memory.js";
 import type { BrandIdentity, MarketingStrategy } from "../types/index.js";
 import { env } from "../config/env.js";
 import chalk from "chalk";
@@ -61,7 +62,7 @@ function sendError(sessionId: string, error: string) {
 
 // ─── Generate Strategy from URL ───
 app.post("/api/strategy/url", async (req, res) => {
-  const { url, sessionId } = req.body;
+  const { url, sessionId, preferences } = req.body;
   if (!url) return res.status(400).json({ error: "URL requerida" });
 
   try {
@@ -73,6 +74,21 @@ app.post("/api/strategy/url", async (req, res) => {
     }
 
     const brand = brandResult.data as BrandIdentity;
+
+    // Apply user preferences
+    if (preferences) {
+      if (preferences.country) brand.location = preferences.country;
+      if (preferences.colors?.primary && preferences.colors.primary !== '#000000') {
+        brand.colors = {
+          primary: preferences.colors.primary,
+          secondary: preferences.colors.secondary || brand.colors.secondary,
+          accent: preferences.colors.accent || brand.colors.accent,
+        };
+      }
+      if (preferences.headingFont) brand.fonts.heading = preferences.headingFont;
+      if (preferences.bodyFont) brand.fonts.body = preferences.bodyFont;
+    }
+
     sendProgress(sessionId, 0, 12, `Marca detectada: ${brand.companyName}. Iniciando estrategia...`);
 
     res.json({ status: "generating", companyName: brand.companyName });
@@ -90,7 +106,7 @@ app.post("/api/strategy/url", async (req, res) => {
 
 // ─── Generate Strategy from Instagram ───
 app.post("/api/strategy/instagram", async (req, res) => {
-  const { handle, sessionId } = req.body;
+  const { handle, sessionId, preferences } = req.body;
   if (!handle) return res.status(400).json({ error: "Handle requerido" });
 
   try {
@@ -102,6 +118,21 @@ app.post("/api/strategy/instagram", async (req, res) => {
     }
 
     const brand = brandResult.data as BrandIdentity;
+
+    // Apply user preferences
+    if (preferences) {
+      if (preferences.country) brand.location = preferences.country;
+      if (preferences.colors?.primary && preferences.colors.primary !== '#000000') {
+        brand.colors = {
+          primary: preferences.colors.primary,
+          secondary: preferences.colors.secondary || brand.colors.secondary,
+          accent: preferences.colors.accent || brand.colors.accent,
+        };
+      }
+      if (preferences.headingFont) brand.fonts.heading = preferences.headingFont;
+      if (preferences.bodyFont) brand.fonts.body = preferences.bodyFont;
+    }
+
     res.json({ status: "generating", companyName: brand.companyName });
 
     const strategy = await generateStrategy(brand, (step, total, msg) => {
@@ -116,7 +147,7 @@ app.post("/api/strategy/instagram", async (req, res) => {
 
 // ─── Generate Strategy from Description ───
 app.post("/api/strategy/description", async (req, res) => {
-  const { description, sessionId } = req.body;
+  const { description, sessionId, preferences } = req.body;
   if (!description) return res.status(400).json({ error: "Descripcion requerida" });
 
   try {
@@ -128,6 +159,21 @@ app.post("/api/strategy/description", async (req, res) => {
     }
 
     const brand = brandResult.data as BrandIdentity;
+
+    // Apply user preferences
+    if (preferences) {
+      if (preferences.country) brand.location = preferences.country;
+      if (preferences.colors?.primary && preferences.colors.primary !== '#000000') {
+        brand.colors = {
+          primary: preferences.colors.primary,
+          secondary: preferences.colors.secondary || brand.colors.secondary,
+          accent: preferences.colors.accent || brand.colors.accent,
+        };
+      }
+      if (preferences.headingFont) brand.fonts.heading = preferences.headingFont;
+      if (preferences.bodyFont) brand.fonts.body = preferences.bodyFont;
+    }
+
     res.json({ status: "generating", companyName: brand.companyName });
 
     const strategy = await generateStrategy(brand, (step, total, msg) => {
@@ -165,6 +211,16 @@ app.get("/api/strategies", (_req, res) => {
   res.json(strategies);
 });
 
+// ─── Delete strategy ───
+app.delete("/api/strategy/:id", (req, res) => {
+  const id = parseInt(req.params.id);
+  const success = deleteStrategy(id);
+  if (!success) return res.status(404).json({ error: "Estrategia no encontrada" });
+  // Clear cached strategy if it was the deleted one
+  if (currentStrategy?.id === id) currentStrategy = null;
+  res.json({ success: true });
+});
+
 // ─── Generate PPTX ───
 app.post("/api/pptx/:id", async (req, res) => {
   const id = parseInt(req.params.id);
@@ -195,10 +251,69 @@ app.get("/api/pptx/download/:id", async (req, res) => {
     if (result.success) {
       const data = result.data as Record<string, unknown>;
       const filePath = data.filePath as string;
-      res.download(filePath, `${strategy.companyName.replace(/\s+/g, "_")}_Estrategia.pptx`);
+      const filename = (data.filename as string) || `${strategy.companyName.replace(/\s+/g, "_")}_Estrategia.pptx`;
+
+      if (!existsSync(filePath)) {
+        return res.status(404).json({ error: "Archivo PPTX no encontrado despues de generacion" });
+      }
+
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.presentationml.presentation");
+      res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(filename)}"`);
+      createReadStream(filePath).pipe(res);
     } else {
       res.status(500).json({ error: result.error });
     }
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// ─── Provider diagnostics (singleton pattern to avoid double rate-limit hits) ───
+let cachedDiagnostics: Record<string, unknown> | null = null;
+let diagnosticsTimestamp = 0;
+let activeDiagnosticsPromise: Promise<Record<string, unknown>> | null = null;
+const DIAGNOSTICS_CACHE_TTL = 120_000; // 2 minutes cache
+
+async function runDiagnostics(): Promise<Record<string, unknown>> {
+  const { diagnoseProviders } = await import("../llm/index.js");
+  const results = await diagnoseProviders();
+  const working = Object.entries(results).filter(([_, r]) => r.working).map(([n]) => n);
+  const failing = Object.entries(results).filter(([_, r]) => !r.working).map(([n]) => n);
+  const response = {
+    providers: results,
+    summary: { working, failing, totalWorking: working.length, totalFailing: failing.length },
+  };
+  cachedDiagnostics = response;
+  diagnosticsTimestamp = Date.now();
+  return response;
+}
+
+async function getDiagnostics(forceRefresh = false): Promise<Record<string, unknown>> {
+  const now = Date.now();
+
+  // Return cached if fresh
+  if (!forceRefresh && cachedDiagnostics && (now - diagnosticsTimestamp) < DIAGNOSTICS_CACHE_TTL) {
+    return cachedDiagnostics;
+  }
+
+  // If a diagnosis is already running, wait for it instead of starting a new one
+  if (activeDiagnosticsPromise) {
+    return activeDiagnosticsPromise;
+  }
+
+  // Start a new diagnosis
+  activeDiagnosticsPromise = runDiagnostics().finally(() => {
+    activeDiagnosticsPromise = null;
+  });
+
+  return activeDiagnosticsPromise;
+}
+
+app.get("/api/diagnose", async (req, res) => {
+  const forceRefresh = req.query.refresh === "true";
+  try {
+    const result = await getDiagnostics(forceRefresh);
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
@@ -216,5 +331,23 @@ export function startWebServer() {
     console.log(chalk.bold.magenta(`\n  StrategyGravity Web Server`));
     console.log(chalk.cyan(`  http://localhost:${PORT}`));
     console.log(chalk.dim(`  Ctrl+C para detener\n`));
+
+    // Run provider diagnostics via singleton (frontend /api/diagnose will reuse this)
+    console.log(chalk.cyan("  Diagnosticando proveedores LLM..."));
+    getDiagnostics(true).then((result: any) => {
+      const working = result.summary?.working || [];
+      const failing = result.summary?.failing || [];
+
+      if (working.length > 0) {
+        console.log(chalk.green(`  Proveedores activos: ${working.join(", ")}`));
+      }
+      if (failing.length > 0) {
+        console.log(chalk.yellow(`  Proveedores con problemas: ${failing.join(", ")}`));
+      }
+      if (working.length === 0) {
+        console.log(chalk.red.bold(`  ADVERTENCIA: Ningun proveedor LLM funcional!`));
+      }
+      console.log("");
+    }).catch(() => {});
   });
 }

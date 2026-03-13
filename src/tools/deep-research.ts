@@ -1,8 +1,66 @@
 import { getResearchProvider } from "../llm/index.js";
 import { searchGoogle, deduplicateUrls } from "./web-search.js";
 import { scrapeCompetitorWebsite } from "./web-scraper.js";
-import { delay } from "./http-utils.js";
+import { delay, verifyUrl, verifyUrls } from "./http-utils.js";
 import type { ToolResult, Competitor, KeywordGroup, ScrapedCompetitorData } from "../types/index.js";
+
+/**
+ * Verify competitor URLs via HTTP HEAD requests.
+ * For unverified URLs, try domain variations. Mark each competitor as verified or not.
+ */
+async function verifyCompetitorUrls(competitors: Competitor[]): Promise<Competitor[]> {
+  if (competitors.length === 0) return competitors;
+
+  const urls = competitors.map((c) => c.website).filter(Boolean);
+  if (urls.length === 0) return competitors;
+
+  console.log(`  [Research] Verificando ${urls.length} URLs de competidores...`);
+  const verification = await verifyUrls(urls, 5000);
+
+  const result: Competitor[] = [];
+  for (const comp of competitors) {
+    const isVerified = verification.get(comp.website);
+    if (isVerified) {
+      result.push({ ...comp, urlVerified: true });
+      continue;
+    }
+
+    // Try domain variations from company name
+    const slug = comp.name
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, "")
+      .slice(0, 30);
+
+    const candidates = [
+      `https://www.${slug}.com`,
+      `https://${slug}.com`,
+      `https://www.${slug}.com.pa`,
+      `https://www.${slug}.co`,
+    ];
+
+    let correctedUrl: string | null = null;
+    for (const candidate of candidates) {
+      if (await verifyUrl(candidate, 3000)) {
+        correctedUrl = candidate;
+        break;
+      }
+    }
+
+    if (correctedUrl) {
+      console.log(`  [Research] URL corregida: ${comp.website} -> ${correctedUrl}`);
+      result.push({ ...comp, website: correctedUrl, urlVerified: true });
+    } else {
+      console.log(`  [Research] URL no verificada: ${comp.website} (${comp.name})`);
+      result.push({ ...comp, urlVerified: false });
+    }
+  }
+
+  const verifiedCount = result.filter((c) => c.urlVerified).length;
+  console.log(`  [Research] ${verifiedCount}/${result.length} URLs verificadas`);
+  return result;
+}
 
 export async function researchCompetitors(
   companyName: string,
@@ -15,32 +73,105 @@ export async function researchCompetitors(
     // Step 1: Search Google for real competitors
     console.log(`  [Research] Buscando competidores reales de "${companyName}"...`);
 
-    const queries = [
-      `mejores empresas ${industry} ${location}`,
-      `${industry} ${location} competidores`,
-      `${companyName} alternativas ${location}`,
-    ];
+    // Natural search queries — EXACTLY how a real user would search Google
+    const isRealLocation = location && !/mercado objetivo|no determinable|desconocid|unknown|n\/a/i.test(location);
+    const queries: string[] = [];
+
+    if (isRealLocation) {
+      // Primary: natural search query (e.g. "agencia de marketing en panamá")
+      queries.push(`${industry} en ${location}`);
+      // Secondary: "mejores" variant (e.g. "mejores agencias de marketing en panamá")
+      queries.push(`mejores ${industry} en ${location}`);
+      // Tertiary: plain combo (e.g. "agencia de marketing panamá")
+      queries.push(`${industry} ${location}`);
+      // Additional: target actual business websites
+      queries.push(`mejores empresas de ${industry} en ${location}`);
+      queries.push(`${industry} ${location} sitio oficial`);
+      // Extract country from location for broader search
+      const locationParts = location.split(',').map(s => s.trim());
+      const country = locationParts[locationParts.length - 1] || location;
+      if (country !== location) {
+        queries.push(`${industry} en ${country}`);
+      }
+    } else {
+      queries.push(`mejores ${industry}`);
+      queries.push(`${industry} empresas`);
+    }
 
     const allResults = [];
     for (const query of queries) {
       const results = await searchGoogle(query, 10);
       allResults.push(...results);
-      await delay(5000); // Give rate limits time to reset between searches
+      await delay(4000);
     }
 
-    // Filter out the company itself and non-business URLs
+    // Filter out the company itself, social media, and non-business URLs
     const excludePatterns = [
       companyName.toLowerCase(),
       "wikipedia", "youtube", "facebook", "instagram", "twitter",
-      "linkedin", "yelp", "tripadvisor", "google.com",
+      "linkedin", "yelp", "tripadvisor", "google.com", "tiktok",
+    ];
+
+    // Filter out aggregator/listicle sites that are NOT real competitors
+    const aggregatorPatterns = [
+      "top-", "top 10", "top 5", "top 20", "mejores-", "mejores ",
+      "ranking", "listado", "directorio", "comparar", "comparativa",
+      "/blog/", "/articulo/", "/post/", "/article/",
+      "nichoseo", "sortlist", "goodfirms", "clutch.co", "g2.com",
+      "capterra", "trustpilot", "glassdoor", "indeed",
+      "hubspot.com/blog", "semrush.com/blog", "ahrefs.com/blog",
     ];
 
     const filtered = allResults.filter((r) => {
       const lower = (r.url + r.title).toLowerCase();
-      return !excludePatterns.some((p) => lower.includes(p));
+      // Exclude social/non-business
+      if (excludePatterns.some((p) => lower.includes(p))) return false;
+      // Exclude aggregators and listicles
+      if (aggregatorPatterns.some((p) => lower.includes(p))) return false;
+      return true;
     });
 
-    const unique = deduplicateUrls(filtered).slice(0, 5);
+    // Score and sort: POSITION IS KING — top 5 Google results are what matters
+    const scored = filtered.map((r) => {
+      let score = 0;
+      // Massive bonus for top Google positions (user wants top 5)
+      if (r.position === 1) score += 20;
+      else if (r.position === 2) score += 17;
+      else if (r.position === 3) score += 15;
+      else if (r.position === 4) score += 12;
+      else if (r.position === 5) score += 10;
+      else if (r.position <= 7) score += 5;
+      else if (r.position <= 10) score += 2;
+      try {
+        const path = new URL(r.url).pathname;
+        if (path === "/" || path === "") score += 3;             // Homepage = best
+        else if (path.split("/").filter(Boolean).length <= 1) score += 2;  // Shallow path
+        if (/servicio|about|nosotros|contacto|solutions|services/i.test(path)) score += 1;
+        // Bonus if domain contains industry-related terms
+        const domain = new URL(r.url).hostname.toLowerCase();
+        if (domain.includes(industry.split(" ")[0].toLowerCase())) score += 1;
+      } catch {}
+      return { ...r, score };
+    });
+    scored.sort((a, b) => b.score - a.score);
+
+    const deduplicated = deduplicateUrls(scored);
+
+    // Verify URLs look like real business websites (not 404 pages)
+    const verified = [];
+    for (const result of deduplicated) {
+      try {
+        const url = new URL(result.url);
+        // Must have a real domain (not IP, not localhost)
+        if (url.hostname.includes('.') && !url.hostname.startsWith('localhost')) {
+          verified.push(result);
+        }
+      } catch {
+        // Skip invalid URLs
+      }
+    }
+
+    const unique = verified.slice(0, 5);
 
     if (unique.length === 0) {
       console.log("  [Research] No se encontraron competidores via web, usando LLM...");
@@ -83,18 +214,25 @@ Contenido del sitio (extracto): ${d.bodyText.slice(0, 3000)}
       )
       .join("\n");
 
-    const prompt = `Eres un analista de inteligencia competitiva de elite. Analiza estos datos REALES extraidos de sitios web de competidores de "${companyName}" en la industria de ${industry} en ${location}.
+    const prompt = `Eres un analista de inteligencia competitiva de élite. Analiza estos datos REALES extraídos de sitios web de competidores de "${companyName}" en el sector de ${industry} en ${location}.
 
-DATOS REALES EXTRAIDOS DE SITIOS WEB:
+DATOS REALES EXTRAÍDOS DE SITIOS WEB:
 ${scrapedContext}
 
-Para CADA competidor, crea un analisis PROFUNDO y DETALLADO que incluya:
-1. Nombre de la empresa y su descripcion
+REQUISITOS CRÍTICOS:
+- Solo incluye competidores que operen EN EL MISMO PAÍS/REGIÓN que ${companyName} (${location})
+- Deben ser empresas del MISMO SECTOR (${industry}) que compitan directamente
+- Si algún resultado no es un competidor real del mismo sector, EXCLÚYELO
+- DEBILIDADES deben ser REALES y ESPECÍFICAS: analiza su sitio web, su tecnología, su contenido, su UX. ¿Su sitio es lento? ¿No tiene blog? ¿No aparece en redes sociales? ¿Diseño anticuado? ¿No tiene chat en vivo? ¿Precios no transparentes? Busca debilidades CONCRETAS basadas en los datos que ves.
+- OPORTUNIDADES para ${companyName} deben ser ACCIONABLES: explica exactamente qué puede hacer ${companyName} para ganar a esos clientes
+
+Para CADA competidor válido, crea un análisis PROFUNDO y DETALLADO que incluya:
+1. Nombre de la empresa y su descripción
 2. Servicios principales detectados en su sitio web
-3. FORTALEZAS (minimo 3) con explicacion detallada
-4. DEBILIDADES (minimo 3) con explicacion detallada
+3. FORTALEZAS (mínimo 3) con explicación detallada
+4. DEBILIDADES (mínimo 3) con explicación detallada
 5. OPORTUNIDADES para ${companyName}
-6. Analisis SEO basico
+6. Análisis SEO básico
 
 IMPORTANTE: El campo detailedAnalysis debe tener AL MENOS 200 palabras por competidor.
 
@@ -122,7 +260,9 @@ Retorna SOLO JSON valido:
 
     const jsonMatch = response.text.match(/\{[\s\S]*\}/);
     const data = JSON.parse(jsonMatch?.[0] ?? response.text);
-    return { success: true, data: data.competitors as Competitor[] };
+    // Verify URLs from LLM analysis (they come from web search so most should resolve)
+    const verifiedCompetitors = await verifyCompetitorUrls(data.competitors as Competitor[]);
+    return { success: true, data: verifiedCompetitors };
   } catch (err) {
     console.log(`  [Research] Error: ${(err as Error).message}`);
     return await researchCompetitorsWithLLM(companyName, industry, location);
@@ -136,11 +276,24 @@ async function researchCompetitorsWithLLM(
 ): Promise<ToolResult> {
   const provider = getResearchProvider();
 
-  const prompt = `Realiza un analisis competitivo PROFUNDO para "${companyName}" en ${industry}, ${location}.
-Identifica 5 competidores principales REALES. Para cada uno:
-- Nombre y sitio web REAL
-- Servicios, fortalezas (3+), debilidades (3+), oportunidades
-- Analisis SEO
+  const prompt = `Realiza un análisis competitivo PROFUNDO para "${companyName}" en el sector de ${industry}, ubicada en ${location}.
+
+REQUISITOS CRÍTICOS - LEE CON CUIDADO:
+1. Identifica los 5 competidores principales REALES que operan EN EL MISMO PAÍS (${location})
+2. Deben ser empresas del MISMO SECTOR (${industry}) que compitan DIRECTAMENTE por el mismo cliente
+3. Sus URLs deben ser REALES y FUNCIONALES - NO inventes URLs. Si no conoces la URL exacta, usa el formato correcto del dominio
+4. Deben ser las empresas que aparecerían en los PRIMEROS RESULTADOS de Google al buscar "${industry} en ${location}"
+5. IMPORTANTE: Deben ser COMPETIDORES DIRECTOS - empresas que ofrecen los mismos servicios al mismo segmento objetivo
+6. NO incluyas empresas internacionales gigantes a menos que tengan operación LOCAL en ${location}
+
+Para cada competidor incluye:
+- name: nombre REAL de la empresa
+- website: URL REAL del sitio web (verifica que sea el dominio correcto)
+- detailedAnalysis: análisis de 200+ palabras sobre qué hace, su posicionamiento y cómo compite
+- services: lista de servicios principales
+- strengths: MÍNIMO 3 fortalezas ESPECÍFICAS (no genéricas)
+- weaknesses: MÍNIMO 3 debilidades REALES que representen oportunidades (debilidades en servicio al cliente, tecnología obsoleta, precios altos, falta de presencia digital, etc.)
+- opportunitiesForUs: MÍNIMO 2 oportunidades CONCRETAS para ${companyName}
 
 Retorna SOLO JSON:
 {
@@ -154,10 +307,18 @@ Retorna SOLO JSON:
 }`;
 
   try {
-    const response = await provider.generate(prompt, "Analista competitivo experto. Solo JSON.", { maxTokens: 8192 });
+    const response = await provider.generate(prompt, "Analista competitivo experto. Solo JSON.", { maxTokens: 4096 });
     const jsonMatch = response.text.match(/\{[\s\S]*\}/);
     const data = JSON.parse(jsonMatch?.[0] ?? response.text);
-    return { success: true, data: data.competitors as Competitor[] };
+    // Handle different response shapes from various LLM providers
+    const competitors = data.competitors || data.competidores || data.competitor_analysis || [];
+    if (Array.isArray(competitors) && competitors.length > 0) {
+      // Verify URLs — LLM-only path is most likely to hallucinate
+      const verifiedCompetitors = await verifyCompetitorUrls(competitors as Competitor[]);
+      return { success: true, data: verifiedCompetitors };
+    }
+    console.log(`  [Research] LLM retorno JSON pero sin competidores validos`);
+    return { success: false, error: "LLM no genero competidores" };
   } catch (err) {
     return { success: false, error: `Investigacion fallo: ${(err as Error).message}` };
   }
@@ -194,7 +355,7 @@ Retorna SOLO JSON:
 }`;
 
   try {
-    const response = await provider.generate(prompt, "Especialista SEO. Solo JSON.", { maxTokens: 8192 });
+    const response = await provider.generate(prompt, "Especialista SEO. Solo JSON.", { maxTokens: 4096 });
     const jsonMatch = response.text.match(/\{[\s\S]*\}/);
     const data = JSON.parse(jsonMatch?.[0] ?? response.text);
     return { success: true, data: data.keywordGroups as KeywordGroup[] };

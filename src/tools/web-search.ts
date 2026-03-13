@@ -4,10 +4,14 @@ import { env } from "../config/env.js";
 import { fetchPage, delay } from "./http-utils.js";
 import type { WebSearchResult } from "../types/index.js";
 
+// Track whether Claude API is usable for search (avoids repeated 400 errors)
+let claudeSearchDisabled = false;
+
 // ─── Approach A: Claude with web_search tool (most reliable) ───
 
 async function searchWithClaude(query: string, count: number): Promise<WebSearchResult[]> {
   if (!env.ANTHROPIC_API_KEY) throw new Error("No Anthropic API key");
+  if (claudeSearchDisabled) throw new Error("Claude search disabled (no credits)");
 
   const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
 
@@ -35,6 +39,13 @@ async function searchWithClaude(query: string, count: number): Promise<WebSearch
       });
       break; // success
     } catch (err: any) {
+      // If billing/credit error, disable Claude search for the rest of the session
+      const msg = err?.message?.toLowerCase() || "";
+      if (err?.status === 400 && (msg.includes("credit") || msg.includes("billing") || msg.includes("cred"))) {
+        claudeSearchDisabled = true;
+        throw err;
+      }
+
       if ((err?.status === 429 || err?.message?.includes("rate_limit")) && attempt < 3) {
         const waitMs = 20000 * (attempt + 1);
         console.log(`  [Search] Rate limit, esperando ${Math.round(waitMs / 1000)}s...`);
@@ -92,16 +103,52 @@ async function searchWithClaude(query: string, count: number): Promise<WebSearch
     .map((url, i) => ({ title: "", url, snippet: "", position: i + 1 }));
 }
 
-// ─── Approach B: Direct Google scraping (fallback) ───
+// ─── Approach B: DuckDuckGo HTML scraping (no blocking like Google) ───
 
-async function searchWithScraping(query: string, count: number): Promise<WebSearchResult[]> {
+async function searchWithDuckDuckGo(query: string, count: number): Promise<WebSearchResult[]> {
+  const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+
+  const html = await fetchPage(url);
+  const $ = cheerio.load(html);
+  const results: WebSearchResult[] = [];
+
+  $(".result").each((_i, el) => {
+    if (results.length >= count) return;
+
+    const titleEl = $(el).find(".result__title a, .result__a").first();
+    const snippetEl = $(el).find(".result__snippet").first();
+
+    const title = titleEl.text().trim();
+    let href = titleEl.attr("href") || "";
+
+    // DuckDuckGo uses redirect URLs, extract actual URL
+    if (href.includes("uddg=")) {
+      try {
+        const urlParam = new URL(href, "https://duckduckgo.com").searchParams.get("uddg");
+        if (urlParam) href = urlParam;
+      } catch {}
+    }
+
+    const snippet = snippetEl.text().trim();
+
+    if (title && href.startsWith("http")) {
+      results.push({ title, url: href, snippet, position: results.length + 1 });
+    }
+  });
+
+  return results;
+}
+
+// ─── Approach C: Direct Google scraping (fallback, often blocked) ───
+
+async function searchWithGoogleScraping(query: string, count: number): Promise<WebSearchResult[]> {
   const url = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=${count + 5}&hl=es`;
 
   const html = await fetchPage(url);
   const $ = cheerio.load(html);
   const results: WebSearchResult[] = [];
 
-  $("div.g").each((i, el) => {
+  $("div.g").each((_i, el) => {
     if (results.length >= count) return;
 
     const titleEl = $(el).find("h3").first();
@@ -120,7 +167,7 @@ async function searchWithScraping(query: string, count: number): Promise<WebSear
   });
 
   if (results.length === 0) {
-    $("a[href^='http']").each((i, el) => {
+    $("a[href^='http']").each((_i, el) => {
       if (results.length >= count) return;
       const href = $(el).attr("href") || "";
       const text = $(el).text().trim();
@@ -133,32 +180,46 @@ async function searchWithScraping(query: string, count: number): Promise<WebSear
   return results;
 }
 
-// ─── Main export: tries Claude web_search first, falls back to scraping ───
+// ─── Main export: tries Claude → DuckDuckGo → Google scraping ───
 
 export async function searchGoogle(query: string, count = 10): Promise<WebSearchResult[]> {
   console.log(`  [Search] Buscando: "${query.slice(0, 80)}..."`);
 
-  // Try Claude web_search first (most reliable)
-  try {
-    const results = await searchWithClaude(query, count);
-    if (results.length > 0) {
-      console.log(`  [Search] ${results.length} resultados via Claude web_search`);
-      return results;
+  // Try Claude web_search first (most reliable, if available)
+  if (!claudeSearchDisabled) {
+    try {
+      const results = await searchWithClaude(query, count);
+      if (results.length > 0) {
+        console.log(`  [Search] ${results.length} resultados via Claude web_search`);
+        return results;
+      }
+    } catch (err) {
+      console.log(`  [Search] Claude web_search error: ${(err as Error).message?.slice(0, 80)}`);
     }
-  } catch (err) {
-    console.log(`  [Search] Claude web_search error: ${(err as Error).message?.slice(0, 80)}`);
   }
 
-  // Fallback to direct scraping
+  // Fallback to DuckDuckGo (more reliable than Google scraping)
   try {
-    await delay(1000);
-    const results = await searchWithScraping(query, count);
+    await delay(500);
+    const results = await searchWithDuckDuckGo(query, count);
     if (results.length > 0) {
-      console.log(`  [Search] ${results.length} resultados via scraping`);
+      console.log(`  [Search] ${results.length} resultados via DuckDuckGo`);
       return results;
     }
   } catch (err) {
-    console.log(`  [Search] Scraping fallback failed: ${(err as Error).message?.slice(0, 50)}`);
+    console.log(`  [Search] DuckDuckGo fallback error: ${(err as Error).message?.slice(0, 50)}`);
+  }
+
+  // Last fallback: direct Google scraping
+  try {
+    await delay(1000);
+    const results = await searchWithGoogleScraping(query, count);
+    if (results.length > 0) {
+      console.log(`  [Search] ${results.length} resultados via Google scraping`);
+      return results;
+    }
+  } catch (err) {
+    console.log(`  [Search] Google scraping fallback error: ${(err as Error).message?.slice(0, 50)}`);
   }
 
   console.log("  [Search] No se encontraron resultados");
