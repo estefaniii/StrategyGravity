@@ -171,14 +171,14 @@ export async function researchCompetitors(
       }
     }
 
-    const unique = verified.slice(0, 5);
+    const unique = verified.slice(0, 8); // Get extra candidates in case scraping fails for some
 
     if (unique.length === 0) {
       console.log("  [Research] No se encontraron competidores via web, usando LLM...");
       return await researchCompetitorsWithLLM(companyName, industry, location);
     }
 
-    // Step 2: Scrape each competitor website
+    // Step 2: Scrape each competitor website (keep basic data if scraping fails)
     console.log(`  [Research] Analizando ${unique.length} sitios web de competidores...`);
 
     const scrapedData: ScrapedCompetitorData[] = [];
@@ -189,6 +189,15 @@ export async function researchCompetitors(
         await delay(1000);
       } catch (err) {
         console.log(`  [Research] Error scraping ${result.url}: ${(err as Error).message?.slice(0, 50)}`);
+        // Include basic data from search result so we don't lose this competitor
+        scrapedData.push({
+          url: result.url,
+          title: result.title || new URL(result.url).hostname,
+          description: result.snippet || "",
+          services: [],
+          socialLinks: [],
+          bodyText: result.snippet || `Sitio web de ${result.title || "competidor"} en el sector de ${industry}.`,
+        });
       }
     }
 
@@ -220,13 +229,14 @@ DATOS REALES EXTRAÍDOS DE SITIOS WEB:
 ${scrapedContext}
 
 REQUISITOS CRÍTICOS:
+- Debes retornar EXACTAMENTE 5 competidores en tu respuesta. Si hay más de 5 datos, selecciona los 5 más relevantes. Si hay menos de 5 datos de sitios web, complementa con tu conocimiento sobre competidores reales del sector ${industry} en ${location}.
 - Solo incluye competidores que operen EN EL MISMO PAÍS/REGIÓN que ${companyName} (${location})
 - Deben ser empresas del MISMO SECTOR (${industry}) que compitan directamente
-- Si algún resultado no es un competidor real del mismo sector, EXCLÚYELO
+- Si algún resultado no es un competidor real del mismo sector, reemplázalo con uno que sí lo sea
 - DEBILIDADES deben ser REALES y ESPECÍFICAS: analiza su sitio web, su tecnología, su contenido, su UX. ¿Su sitio es lento? ¿No tiene blog? ¿No aparece en redes sociales? ¿Diseño anticuado? ¿No tiene chat en vivo? ¿Precios no transparentes? Busca debilidades CONCRETAS basadas en los datos que ves.
 - OPORTUNIDADES para ${companyName} deben ser ACCIONABLES: explica exactamente qué puede hacer ${companyName} para ganar a esos clientes
 
-Para CADA competidor válido, crea un análisis PROFUNDO y DETALLADO que incluya:
+Para CADA uno de los 5 competidores, crea un análisis PROFUNDO y DETALLADO que incluya:
 1. Nombre de la empresa y su descripción
 2. Servicios principales detectados en su sitio web
 3. FORTALEZAS (mínimo 3) con explicación detallada

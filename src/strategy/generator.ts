@@ -208,6 +208,49 @@ export async function generateStrategy(
       log("2/12", `Generacion directa fallo: ${(err as Error).message?.slice(0, 50)}`);
     }
   }
+
+  // Guarantee minimum 5 competitors — supplement with LLM if we have fewer
+  const TARGET_COMPETITORS = 5;
+  if (competitors.length > 0 && competitors.length < TARGET_COMPETITORS) {
+    const missing = TARGET_COMPETITORS - competitors.length;
+    log("2/12", `Solo ${competitors.length} competidores, buscando ${missing} más con IA...`);
+    try {
+      const existingNames = competitors.map(c => c.name).join(", ");
+      const supplementPrompt = `Ya tenemos ${competitors.length} competidores de "${brand.companyName}" en ${brand.industry}${brand.location ? ` en ${brand.location}` : ""}: ${existingNames}.
+
+Necesitamos EXACTAMENTE ${missing} competidores ADICIONALES que:
+1. Sean empresas REALES del mismo sector (${brand.industry})
+2. Operen en la misma ubicación (${brand.location || "mercado objetivo"})
+3. NO sean ninguno de los ya listados: ${existingNames}
+4. Aparecerían en los primeros resultados de Google al buscar "${brand.industry}${brand.location ? ` en ${brand.location}` : ""}"
+5. Sean COMPETIDORES DIRECTOS que compitan por el mismo cliente
+
+Para CADA competidor incluye análisis detallado con fortalezas, debilidades y oportunidades.
+
+Retorna SOLO JSON:
+{
+  "competitors": [
+    {
+      "name": "nombre", "website": "url", "detailedAnalysis": "200+ palabras...",
+      "services": [], "strengths": ["min 3"], "weaknesses": ["min 3"], "opportunitiesForUs": ["min 2"],
+      "seoAnalysis": { "topKeywords": [], "estimatedTraffic": "nivel" }
+    }
+  ]
+}`;
+      const supplemented = await generateJSON<{ competitors: Competitor[] }>(
+        supplementPrompt,
+        prompts.STRATEGY_SYSTEM_PROMPT,
+        { maxTokens: 4096, label: "2/12 Competidores adicionales" }
+      );
+      if (supplemented.competitors?.length > 0) {
+        competitors = [...competitors, ...supplemented.competitors.slice(0, missing)];
+        log("2/12", `Completados a ${competitors.length} competidores`);
+      }
+    } catch (err) {
+      log("2/12", `Suplemento parcial: ${(err as Error).message?.slice(0, 50)}`);
+    }
+  }
+
   log("2/12", `${competitors.length} competidores analizados`);
 
   // ─── Point 3: Comparative Analysis ───

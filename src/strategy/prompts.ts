@@ -44,8 +44,8 @@ Retorna SOLO JSON válido:
 export function promptCompetitorAnalysis(brand: BrandIdentity, competitors: Competitor[]): string {
   const hasData = competitors.length > 0;
   const dataSection = hasData
-    ? `Datos de competidores encontrados vía web:\n${JSON.stringify(competitors, null, 2)}\n\nPara CADA competidor, expande y refina el análisis.`
-    : `No se encontraron competidores vía búsqueda web. IDENTIFICA 5 competidores REALES de "${brand.companyName}" en la industria de ${brand.industry}${brand.location ? ` en ${brand.location}` : ""}. Usa tu conocimiento para nombrar empresas REALES con sus sitios web verdaderos.`;
+    ? `Datos de competidores encontrados vía web:\n${JSON.stringify(competitors, null, 2)}\n\nPara CADA competidor, expande y refina el análisis. Si hay menos de 5 competidores en los datos, AGREGA competidores REALES adicionales hasta completar EXACTAMENTE 5.`
+    : `No se encontraron competidores vía búsqueda web. IDENTIFICA EXACTAMENTE 5 competidores REALES de "${brand.companyName}" en la industria de ${brand.industry}${brand.location ? ` en ${brand.location}` : ""}. Usa tu conocimiento para nombrar empresas REALES con sus sitios web verdaderos. Deben ser empresas que aparecerían en los primeros resultados de Google al buscar "${brand.industry}${brand.location ? ` en ${brand.location}` : ""}".`;
 
   return `${dataSection}
 
@@ -62,7 +62,7 @@ Cada competidor debe tener:
 - weaknesses: MÍNIMO 3 debilidades con explicación detallada
 - opportunitiesForUs: MÍNIMO 2 oportunidades ESPECÍFICAS y ACCIONABLES que expliquen cómo ${brand.companyName} puede superar a este competidor. Sé concreto: menciona qué modelo, servicio o enfoque puede adoptar ${brand.companyName} para captar a esos clientes.
 
-IMPORTANTE: Deben ser empresas REALES, no inventadas. Incluye sus sitios web REALES.
+IMPORTANTE: Debes retornar EXACTAMENTE 5 competidores. Deben ser empresas REALES, no inventadas. Incluye sus sitios web REALES. Si los datos de web tienen menos de 5, complementa con tu conocimiento.
 ${brand.location && !/mercado objetivo|no determinable/i.test(brand.location) ? `FACTOR GEOGRÁFICO CRÍTICO: Prioriza competidores que operen en ${brand.location} o en el mismo país/región. Deben competir en el MISMO SECTOR (${brand.industry}). Analiza cómo cada competidor se posiciona geográficamente y si tiene presencia local o regional.` : ""}
 
 CRÍTICO - COMPETIDORES DIRECTOS:
