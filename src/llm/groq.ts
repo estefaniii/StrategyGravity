@@ -6,10 +6,10 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-// Models ordered by quality: best first, fallback to faster model with higher rate limits
+// Models ordered for free-tier reliability: 8B has 131K TPM (works), 70B has 6K TPM (always rate-limits)
 const GROQ_MODELS = [
-  "llama-3.3-70b-versatile",   // Better quality, stricter free-tier limits (30 RPM, 6000 TPM)
-  "llama-3.1-8b-instant",      // Lower quality, much higher limits (30 RPM, 131072 TPM)
+  "llama-3.1-8b-instant",      // Higher rate limits (131072 TPM), reliable on free tier
+  "llama-3.3-70b-versatile",   // Better quality but strict limits (6000 TPM), fallback only
 ];
 
 export class GroqProvider implements LLMProviderInterface {
@@ -36,7 +36,7 @@ export class GroqProvider implements LLMProviderInterface {
     let lastError: any;
 
     for (const model of GROQ_MODELS) {
-      const maxRetries = 2;
+      const maxRetries = 1;
       for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
           const response = await this.client.chat.completions.create({
@@ -58,7 +58,7 @@ export class GroqProvider implements LLMProviderInterface {
           lastError = err;
           const isRateLimit = err?.status === 429 || err?.message?.includes("rate_limit") || err?.message?.includes("Rate limit");
           if (isRateLimit && attempt < maxRetries) {
-            const waitMs = 5000 * (attempt + 1);
+            const waitMs = 3000 * (attempt + 1);
             console.log(`  [Groq] Rate limit (${model}), esperando ${Math.round(waitMs / 1000)}s (intento ${attempt + 1}/${maxRetries})...`);
             await sleep(waitMs);
             continue;

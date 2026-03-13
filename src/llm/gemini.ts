@@ -32,7 +32,7 @@ export class GeminiProvider implements LLMProviderInterface {
     let lastError: any;
 
     for (const modelName of GEMINI_MODELS) {
-      const maxRetries = 2;
+      const maxRetries = 1;
       for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
           const model = this.client.getGenerativeModel({
@@ -56,7 +56,7 @@ export class GeminiProvider implements LLMProviderInterface {
           const isRateLimit = err?.status === 429 || msg.includes("429") || msg.includes("rate") || msg.includes("resource") || msg.includes("quota");
 
           if (isRateLimit && attempt < maxRetries) {
-            const waitMs = 5000 * (attempt + 1);
+            const waitMs = 3000 * (attempt + 1);
             console.log(`  [Gemini] Rate limit (${modelName}), esperando ${Math.round(waitMs / 1000)}s (intento ${attempt + 1}/${maxRetries})...`);
             await sleep(waitMs);
             continue;

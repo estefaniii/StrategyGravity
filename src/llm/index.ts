@@ -13,7 +13,7 @@ const PROVIDER_MAX_TOKENS: Record<string, number> = {};
 
 // Provider cooldown: skip providers that fail consistently to avoid wasting time on retries
 const PROVIDER_COOLDOWNS: Record<string, { until: number; consecutiveFailures: number }> = {};
-const COOLDOWN_THRESHOLD = 2;      // Failures before cooldown kicks in
+const COOLDOWN_THRESHOLD = 1;      // Failures before cooldown kicks in (1 = skip after first failure, since these are persistent)
 const COOLDOWN_DURATION = 30_000;   // 30 seconds cooldown (faster recovery for free tiers)
 
 function recordProviderFailure(name: string): void {
@@ -189,15 +189,15 @@ function buildFallbackChain(priorityKeys: string[]): LLMProviderInterface {
 export function getProvider(name?: string): LLMProviderInterface {
   if (Object.keys(providers).length === 0) initProviders();
   if (name && providers[name]) return providers[name];
-  return buildFallbackChain(["claude", "gemini", "groq", "openrouter"]);
+  return buildFallbackChain(["groq", "openrouter", "gemini", "claude"]);
 }
 
 export function getFastProvider(): LLMProviderInterface {
-  return buildFallbackChain(["groq", "gemini", "claude", "openrouter"]);
+  return buildFallbackChain(["groq", "openrouter", "gemini", "claude"]);
 }
 
 export function getResearchProvider(): LLMProviderInterface {
-  return buildFallbackChain(["claude", "gemini", "groq", "openrouter"]);
+  return buildFallbackChain(["groq", "openrouter", "gemini", "claude"]);
 }
 
 export function listAvailableProviders(): string[] {

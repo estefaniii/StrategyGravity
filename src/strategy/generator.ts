@@ -76,7 +76,7 @@ function log(step: string, msg: string) {
 }
 
 // Delay between LLM steps to reduce rate limit pressure on free-tier providers
-const STEP_DELAY_MS = 2000;
+const STEP_DELAY_MS = 1000;
 function paceDelay(): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, STEP_DELAY_MS));
 }
