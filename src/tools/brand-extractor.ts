@@ -9,6 +9,72 @@ import { scrapeCompetitorWebsite } from "./web-scraper.js";
 let autoConfirm = false;
 export function setAutoConfirm(value: boolean) { autoConfirm = value; }
 
+/**
+ * Robust JSON parser with multiple fallback strategies.
+ * Same approach as generator.ts parseJSON, adapted for brand extraction.
+ */
+function parseJSONRobust<T>(text: string): T {
+  let cleaned = text.replace(/```(?:json)?\s*/gi, "").replace(/```\s*$/gi, "").trim();
+  const match = cleaned.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error("No JSON found in response");
+
+  const attempts: Array<() => T> = [
+    () => JSON.parse(match[0]) as T,
+    () => {
+      const fixed = match[0].replace(/,\s*([}\]])/g, "$1").replace(/[\r\n]+/g, " ").replace(/\t/g, " ");
+      return JSON.parse(fixed) as T;
+    },
+    () => {
+      let fixed = match[0].replace(/,\s*([}\]])/g, "$1").replace(/[\r\n]+/g, " ").replace(/\t/g, " ");
+      fixed = fixed.replace(/[\x00-\x1F]/g, " ");
+      return JSON.parse(fixed) as T;
+    },
+    () => {
+      const fixed = match[0].replace(/,\s*([}\]])/g, "$1").replace(/[\r\n]+/g, " ").replace(/\t/g, " ").replace(/[\x00-\x1F]/g, " ");
+      const lastBrace = fixed.lastIndexOf("}");
+      if (lastBrace <= 0) throw new Error("no brace");
+      return JSON.parse(fixed.slice(0, lastBrace + 1)) as T;
+    },
+    () => {
+      let fixed = match[0].replace(/[\r\n\t\x00-\x1F]/g, " ").replace(/,\s*([}\]])/g, "$1");
+      for (let end = fixed.length; end > 10; end--) {
+        if (fixed[end - 1] === "}") {
+          try { return JSON.parse(fixed.slice(0, end)) as T; } catch { /* try shorter */ }
+        }
+      }
+      throw new Error("no valid JSON found");
+    },
+  ];
+
+  for (const attempt of attempts) {
+    try { return attempt(); } catch { /* try next */ }
+  }
+  throw new Error("Failed to parse JSON after multiple attempts");
+}
+
+/**
+ * Generate a default brand identity from a URL when all LLM parsing fails.
+ * This ensures the strategy generation can continue with reasonable defaults.
+ */
+function defaultBrandFromUrl(url: string): BrandIdentity {
+  let domain = "empresa";
+  try {
+    domain = new URL(url).hostname.replace("www.", "");
+  } catch {}
+  const companyGuess = domain.replace(/\.(com|net|org|io|co|us|mx|es|ar).*$/i, "").replace(/[-_]/g, " ");
+  const capitalized = companyGuess.charAt(0).toUpperCase() + companyGuess.slice(1);
+
+  return {
+    companyName: capitalized,
+    industry: "Desconocido",
+    description: `Empresa con presencia web en ${domain}`,
+    colors: { primary: "#1A1A2E", secondary: "#16213E", accent: "#E94560" },
+    fonts: { heading: "Montserrat", body: "Open Sans" },
+    website: url,
+    confirmed: false,
+  };
+}
+
 async function askUserOrAutoConfirm(prompt: string): Promise<string> {
   if (autoConfirm) {
     console.log(`  [Auto-confirm] ${prompt.slice(0, 60)}...`);
@@ -110,30 +176,50 @@ Basandote en TODA la informacion disponible, retorna SOLO JSON valido:
   "confidence": "medium"
 }`;
 
-  const response = await generate(
-    prompt,
-    "Eres un analista de identidad de marca. Cuando no puedas ver directamente un sitio, usa los datos disponibles (resultados de busqueda, nombre de dominio, fragmentos extraidos) para inferir la identidad de marca. Retorna SOLO JSON valido, sin markdown."
-  );
-
-  let brandData: Record<string, unknown>;
+  let identity: BrandIdentity;
   try {
-    const jsonMatch = response.text.match(/\{[\s\S]*\}/);
-    brandData = JSON.parse(jsonMatch?.[0] ?? response.text);
-  } catch {
-    return { success: false, error: "Error al parsear identidad de marca de la respuesta de IA" };
-  }
+    const response = await generate(
+      prompt,
+      "Eres un analista de identidad de marca. Cuando no puedas ver directamente un sitio, usa los datos disponibles (resultados de busqueda, nombre de dominio, fragmentos extraidos) para inferir la identidad de marca. Retorna SOLO JSON valido, sin markdown."
+    );
 
-  const identity: BrandIdentity = {
-    companyName: (brandData.companyName as string) || companyGuess,
-    industry: (brandData.industry as string) || "Desconocido",
-    description: (brandData.description as string) || "",
-    colors: (brandData.colors as BrandIdentity["colors"]) || { primary: "#1A1A2E", secondary: "#16213E", accent: "#E94560" },
-    fonts: (brandData.fonts as BrandIdentity["fonts"]) || { heading: "Montserrat", body: "Open Sans" },
-    logo: brandData.logo as string | undefined,
-    website: url,
-    location: (brandData.location as string) || undefined,
-    confirmed: false,
-  };
+    let brandData: Record<string, unknown>;
+    try {
+      brandData = parseJSONRobust<Record<string, unknown>>(response.text);
+    } catch {
+      console.log(`  [Brand] JSON parse fallo, reintentando con prompt de correccion...`);
+      // Retry with correction prompt
+      try {
+        const retryResponse = await generate(
+          `Tu respuesta anterior NO fue JSON valido. Retorna SOLO un objeto JSON puro (sin backticks, sin markdown) con estos campos: companyName, industry, description, location, colors (primary, secondary, accent), fonts (heading, body), website. Basado en: dominio=${domain}, busqueda web disponible.`,
+          "Retorna SOLO JSON valido, sin texto adicional."
+        );
+        brandData = parseJSONRobust<Record<string, unknown>>(retryResponse.text);
+      } catch {
+        console.log(`  [Brand] Segundo intento fallo, usando valores por defecto del dominio`);
+        identity = defaultBrandFromUrl(url);
+        identity.companyName = companyGuess.charAt(0).toUpperCase() + companyGuess.slice(1) || identity.companyName;
+        return { success: true, data: identity };
+      }
+    }
+
+    identity = {
+      companyName: (brandData.companyName as string) || companyGuess,
+      industry: (brandData.industry as string) || "Desconocido",
+      description: (brandData.description as string) || "",
+      colors: (brandData.colors as BrandIdentity["colors"]) || { primary: "#1A1A2E", secondary: "#16213E", accent: "#E94560" },
+      fonts: (brandData.fonts as BrandIdentity["fonts"]) || { heading: "Montserrat", body: "Open Sans" },
+      logo: brandData.logo as string | undefined,
+      website: url,
+      location: (brandData.location as string) || undefined,
+      confirmed: false,
+    };
+  } catch (llmErr) {
+    // LLM completely failed (all providers down) — use default brand
+    console.log(`  [Brand] LLM fallo completamente: ${(llmErr as Error).message?.slice(0, 60)}, usando valores por defecto`);
+    identity = defaultBrandFromUrl(url);
+    identity.companyName = companyGuess.charAt(0).toUpperCase() + companyGuess.slice(1) || identity.companyName;
+  }
 
   console.log(`  [Brand] Detected via web search: ${identity.companyName} (${identity.industry})`);
   console.log(`  [Brand] Location: ${identity.location || "unknown"}`);
@@ -208,10 +294,19 @@ Extrae y retorna esta estructura JSON:
 
     let brandData: Record<string, unknown>;
     try {
-      const jsonMatch = response.text.match(/\{[\s\S]*\}/);
-      brandData = JSON.parse(jsonMatch?.[0] ?? response.text);
+      brandData = parseJSONRobust<Record<string, unknown>>(response.text);
     } catch {
-      return { success: false, error: "Error al parsear identidad de marca de la respuesta de IA" };
+      console.log(`  [Brand] JSON parse fallo en fetch directo, reintentando...`);
+      try {
+        const retryResponse = await generate(
+          `Tu respuesta anterior NO fue JSON valido. Retorna SOLO un objeto JSON puro (sin backticks, sin markdown) con: companyName, industry, description, location, colors (primary, secondary, accent), fonts (heading, body), website="${url}".`,
+          "Retorna SOLO JSON valido, sin texto adicional."
+        );
+        brandData = parseJSONRobust<Record<string, unknown>>(retryResponse.text);
+      } catch {
+        console.log(`  [Brand] Segundo intento fallo, usando valores por defecto`);
+        return { success: true, data: defaultBrandFromUrl(url) };
+      }
     }
 
     const confidence = brandData.confidence as string;
@@ -265,7 +360,9 @@ Extrae y retorna esta estructura JSON:
     try {
       return await extractBrandViaWebSearch(url);
     } catch (fallbackErr) {
-      return { success: false, error: `Extraccion de marca fallo: ${(err as Error).message}. Respaldo tambien fallo: ${(fallbackErr as Error).message}` };
+      // Last resort: return default brand identity so strategy generation can continue
+      console.log(`  [Brand] Todas las estrategias fallaron, usando valores por defecto del dominio`);
+      return { success: true, data: defaultBrandFromUrl(url) };
     }
   }
 }
@@ -292,10 +389,27 @@ Retorna SOLO JSON valido:
 
     let brandData: Record<string, unknown>;
     try {
-      const jsonMatch = response.text.match(/\{[\s\S]*\}/);
-      brandData = JSON.parse(jsonMatch?.[0] ?? response.text);
+      brandData = parseJSONRobust<Record<string, unknown>>(response.text);
     } catch {
-      return { success: false, error: "Error al parsear datos de marca" };
+      console.log(`  [Brand] JSON parse fallo para Instagram, reintentando...`);
+      try {
+        const retryResponse = await generate(
+          `Tu respuesta anterior NO fue JSON valido. Retorna SOLO un objeto JSON puro con: companyName, industry, description, colors (primary, secondary, accent), fonts (heading, body). Para la cuenta @${cleanHandle}.`,
+          "Retorna SOLO JSON valido, sin texto adicional."
+        );
+        brandData = parseJSONRobust<Record<string, unknown>>(retryResponse.text);
+      } catch {
+        console.log(`  [Brand] Segundo intento fallo para Instagram, usando defaults`);
+        return { success: true, data: {
+          companyName: cleanHandle,
+          industry: "Desconocido",
+          description: `Cuenta de Instagram @${cleanHandle}`,
+          colors: { primary: "#1A1A2E", secondary: "#16213E", accent: "#E94560" },
+          fonts: { heading: "Montserrat", body: "Open Sans" },
+          instagram: `@${cleanHandle}`,
+          confirmed: false,
+        } as BrandIdentity };
+      }
     }
 
     const identity: BrandIdentity = {
@@ -360,10 +474,26 @@ Retorna SOLO JSON valido:
 
     let brandData: Record<string, unknown>;
     try {
-      const jsonMatch = response.text.match(/\{[\s\S]*\}/);
-      brandData = JSON.parse(jsonMatch?.[0] ?? response.text);
+      brandData = parseJSONRobust<Record<string, unknown>>(response.text);
     } catch {
-      return { success: false, error: "Error al parsear datos de marca" };
+      console.log(`  [Brand] JSON parse fallo para descripcion, reintentando...`);
+      try {
+        const retryResponse = await generate(
+          `Tu respuesta anterior NO fue JSON valido. Retorna SOLO un objeto JSON puro con: companyName, industry, description, colors (primary, secondary, accent), fonts (heading, body). Basado en: "${description.slice(0, 200)}".`,
+          "Retorna SOLO JSON valido, sin texto adicional."
+        );
+        brandData = parseJSONRobust<Record<string, unknown>>(retryResponse.text);
+      } catch {
+        console.log(`  [Brand] Segundo intento fallo para descripcion, usando defaults`);
+        return { success: true, data: {
+          companyName: "Empresa",
+          industry: "Desconocido",
+          description: description.slice(0, 500),
+          colors: { primary: "#1A1A2E", secondary: "#16213E", accent: "#E94560" },
+          fonts: { heading: "Montserrat", body: "Open Sans" },
+          confirmed: false,
+        } as BrandIdentity };
+      }
     }
 
     const identity: BrandIdentity = {
