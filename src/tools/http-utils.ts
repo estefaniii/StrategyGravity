@@ -53,3 +53,52 @@ export async function fetchWithRetry(url: string, retries = 2, delayMs = 1500): 
 export function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
+
+/**
+ * Verify a URL resolves by sending a HEAD request.
+ * Returns true if status is 2xx or 3xx. Falls back to GET if HEAD fails.
+ */
+export async function verifyUrl(url: string, timeoutMs = 5000): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const response = await fetch(url, {
+      method: "HEAD",
+      headers: { "User-Agent": randomUA(), Accept: "*/*" },
+      signal: controller.signal,
+      redirect: "follow",
+    });
+    clearTimeout(timer);
+    return response.status >= 200 && response.status < 400;
+  } catch {
+    // Some servers block HEAD — try GET with Range header
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const response = await fetch(url, {
+        method: "GET",
+        headers: { "User-Agent": randomUA(), Accept: "text/html", Range: "bytes=0-0" },
+        signal: controller.signal,
+        redirect: "follow",
+      });
+      clearTimeout(timer);
+      return response.status >= 200 && response.status < 400;
+    } catch {
+      return false;
+    }
+  }
+}
+
+/**
+ * Verify multiple URLs in parallel. Returns map of url → boolean.
+ */
+export async function verifyUrls(urls: string[], timeoutMs = 5000): Promise<Map<string, boolean>> {
+  const results = new Map<string, boolean>();
+  await Promise.all(
+    urls.map(async (url) => {
+      const ok = await verifyUrl(url, timeoutMs);
+      results.set(url, ok);
+    })
+  );
+  return results;
+}

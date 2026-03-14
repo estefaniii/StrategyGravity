@@ -6,8 +6,11 @@ import * as prompts from "./prompts.js";
 import chalk from "chalk";
 
 function parseJSON<T>(text: string): T {
+  // Strip markdown fences (```json ... ``` or ``` ... ```)
+  let cleaned = text.replace(/```(?:json)?\s*/gi, "").replace(/```\s*$/gi, "").trim();
+
   // Try to find the outermost JSON object
-  const match = text.match(/\{[\s\S]*\}/);
+  const match = cleaned.match(/\{[\s\S]*\}/);
   if (!match) throw new Error("No JSON found in response");
 
   const attempts: Array<() => T> = [
@@ -72,6 +75,77 @@ function log(step: string, msg: string) {
   console.log(chalk.cyan(`  [${step}]`) + ` ${msg}`);
 }
 
+/** Normalize an LLM array: flatten objects to strings, ensure all items are strings. */
+function normalizeStrArr(arr: unknown): string[] {
+  if (!Array.isArray(arr)) return [];
+  const result: string[] = [];
+  for (const item of arr) {
+    if (typeof item === "string") {
+      result.push(item);
+    } else if (item && typeof item === "object") {
+      // LLM sometimes returns [{key: "value", key2: "value"}] — flatten values
+      const vals = Object.values(item as Record<string, unknown>);
+      for (const v of vals) {
+        if (typeof v === "string" && v.length > 3) result.push(v);
+      }
+    }
+  }
+  return result.length > 0 ? result : [];
+}
+
+// Delay between LLM steps to reduce rate limit pressure on free-tier providers
+const STEP_DELAY_MS = 1000;
+function paceDelay(): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, STEP_DELAY_MS));
+}
+
+/**
+ * Generate JSON from LLM with automatic retry on parse failure.
+ * On first failure, retries once with a "fix your JSON" correction prompt.
+ */
+async function generateJSON<T>(
+  prompt: string,
+  systemPrompt: string,
+  options: { maxTokens: number; label?: string },
+): Promise<T> {
+  const label = options.label || "step";
+
+  // First attempt
+  const response = await generate(prompt, systemPrompt, { maxTokens: options.maxTokens });
+
+  try {
+    return parseJSON<T>(response.text);
+  } catch (firstErr) {
+    // Log raw response for debugging
+    const preview = response.text?.slice(0, 300) || "(empty)";
+    console.log(chalk.yellow(`  [${label}] JSON parse fallo. Respuesta raw (300 chars): ${preview}`));
+
+    // Retry with correction prompt
+    console.log(chalk.yellow(`  [${label}] Reintentando con prompt de correccion...`));
+    try {
+      const correctionPrompt = `Tu respuesta anterior NO fue JSON valido. Aqui esta lo que respondiste:
+
+---
+${response.text.slice(0, 1500)}
+---
+
+CORRIGE y retorna SOLO JSON valido, sin texto adicional, sin backticks, sin markdown. Solo el objeto JSON puro comenzando con { y terminando con }.
+
+Prompt original: ${prompt.slice(0, 500)}`;
+
+      const retryResponse = await generate(correctionPrompt, systemPrompt, {
+        maxTokens: options.maxTokens,
+      });
+
+      return parseJSON<T>(retryResponse.text);
+    } catch (retryErr) {
+      const retryPreview = (retryErr as any)?.text?.slice(0, 200) || "";
+      console.log(chalk.red(`  [${label}] Segundo intento tambien fallo. ${retryPreview}`));
+      throw new Error(`Failed to generate valid JSON for ${label} after 2 attempts`);
+    }
+  }
+}
+
 export async function generateStrategy(
   brand: BrandIdentity,
   onProgress?: ProgressCallback
@@ -85,56 +159,164 @@ export async function generateStrategy(
   // ─── Point 1: Descripcion ───
   emit(1, TOTAL, "Generando descripcion ejecutiva...");
   log("1/12", "Generando descripcion...");
-  const descResponse = await generate(
+  const description = await generateJSON<{ summary: string; objective: string }>(
     prompts.promptDescription(brand),
     prompts.STRATEGY_SYSTEM_PROMPT,
-    { maxTokens: 4096 }
+    { maxTokens: 2048, label: "1/12 Descripcion" }
   );
-  const description = parseJSON<{ summary: string; objective: string }>(descResponse.text);
+  await paceDelay();
 
   // ─── Services (needed early) ───
   log("prep", "Definiendo servicios...");
-  const svcResponse = await generate(
+  const { services } = await generateJSON<{ services: MarketingStrategy["services"] }>(
     prompts.promptServices(brand),
     prompts.STRATEGY_SYSTEM_PROMPT,
-    { maxTokens: 2048 }
+    { maxTokens: 2048, label: "prep Servicios" }
   );
-  const { services } = parseJSON<{ services: MarketingStrategy["services"] }>(svcResponse.text);
+
+  // Ensure "Diseño de Marca" is always present
+  const hasBrandDesign = services.some((s: any) =>
+    /dise[nñ]o\s+de\s+marca/i.test(s?.name || "")
+  );
+  if (!hasBrandDesign) {
+    services.unshift({
+      name: "Diseño de Marca",
+      description: `Servicio integral de identidad visual para ${brand.companyName}, incluyendo diseño de logotipo, paleta de colores, tipografía, papelería corporativa y manual de marca que refleje los valores y posicionamiento de la empresa en el sector de ${brand.industry}.`,
+    });
+  }
+
+  await paceDelay();
 
   // ─── Point 2: Competitor Research (REAL web search + scraping) ───
   emit(2, TOTAL, "Buscando y analizando competidores reales...");
   log("2/12", "Investigando competencia (busqueda web real)...");
-  const location = brand.location || "mercado objetivo";
+
+  // Clean up location — if it's unusable, default to something generic
+  let location = brand.location || "mercado objetivo";
+  if (/no determinable|desconocid|unknown|n\/a|not available/i.test(location)) {
+    location = "mercado objetivo";
+    log("2/12", `Ubicacion no disponible, usando busqueda general`);
+  }
+
   const compResult = await researchCompetitors(brand.companyName, brand.industry, location);
 
   let competitors: Competitor[] = [];
-  if (compResult.success && Array.isArray(compResult.data)) {
-    competitors = compResult.data;
-    // Refine with AI for deeper analysis
-    log("2/12", `${competitors.length} competidores encontrados, refinando analisis...`);
+  if (compResult.success) {
+    // Handle both array data and object with competitors key
+    const rawData = compResult.data;
+    if (Array.isArray(rawData)) {
+      competitors = rawData;
+    } else if (rawData && typeof rawData === "object") {
+      competitors = (rawData as any).competitors || (rawData as any).competidores || [];
+    }
+
+    if (competitors.length > 0) {
+      // Refine with AI for deeper analysis
+      log("2/12", `${competitors.length} competidores encontrados, refinando analisis...`);
+      try {
+        const refined = await generateJSON<{ competitors: Competitor[] }>(
+          prompts.promptCompetitorAnalysis(brand, competitors),
+          prompts.STRATEGY_SYSTEM_PROMPT,
+          { maxTokens: 4096, label: "2/12 Refinar competidores" }
+        );
+        if (refined.competitors?.length > 0) {
+          competitors = refined.competitors;
+        }
+      } catch (err) {
+        log("2/12", `Refinamiento parcial: ${(err as Error).message?.slice(0, 50)}`);
+      }
+    }
+  } else {
+    log("2/12", `Investigacion web fallo: ${compResult.error?.slice(0, 60)}`);
+  }
+
+  // If still no competitors after web+LLM, generate directly with a focused prompt
+  if (competitors.length === 0) {
+    log("2/12", "Sin competidores, generando analisis directo con IA...");
     try {
-      const refineResponse = await generate(
-        prompts.promptCompetitorAnalysis(brand, competitors),
+      const parsed = await generateJSON<{ competitors: Competitor[] }>(
+        prompts.promptCompetitorAnalysis(brand, []),
         prompts.STRATEGY_SYSTEM_PROMPT,
-        { maxTokens: 8192 }
+        { maxTokens: 4096, label: "2/12 Competidores directos" }
       );
-      const refined = parseJSON<{ competitors: Competitor[] }>(refineResponse.text);
-      competitors = refined.competitors;
+      if (parsed.competitors?.length > 0) {
+        competitors = parsed.competitors;
+      }
     } catch (err) {
-      log("2/12", `Refinamiento parcial: ${(err as Error).message?.slice(0, 50)}`);
+      log("2/12", `Generacion directa fallo: ${(err as Error).message?.slice(0, 50)}`);
     }
   }
+
+  // Guarantee minimum 5 competitors — supplement with LLM if we have fewer
+  const TARGET_COMPETITORS = 5;
+  if (competitors.length > 0 && competitors.length < TARGET_COMPETITORS) {
+    const missing = TARGET_COMPETITORS - competitors.length;
+    log("2/12", `Solo ${competitors.length} competidores, buscando ${missing} más con IA...`);
+    try {
+      const existingNames = competitors.map(c => c.name).join(", ");
+      const supplementPrompt = `Ya tenemos ${competitors.length} competidores de "${brand.companyName}" en ${brand.industry}${brand.location ? ` en ${brand.location}` : ""}: ${existingNames}.
+
+Necesitamos EXACTAMENTE ${missing} competidores ADICIONALES que:
+1. Sean empresas REALES del mismo sector (${brand.industry})
+2. Operen en la misma ubicación (${brand.location || "mercado objetivo"})
+3. NO sean ninguno de los ya listados: ${existingNames}
+4. Aparecerían en los primeros resultados de Google al buscar "${brand.industry}${brand.location ? ` en ${brand.location}` : ""}"
+5. Sean COMPETIDORES DIRECTOS que compitan por el mismo cliente
+
+Para CADA competidor incluye análisis detallado con fortalezas, debilidades y oportunidades.
+
+Retorna SOLO JSON:
+{
+  "competitors": [
+    {
+      "name": "nombre", "website": "url", "detailedAnalysis": "200+ palabras...",
+      "services": [], "strengths": ["min 3"], "weaknesses": ["min 3"], "opportunitiesForUs": ["min 2"],
+      "seoAnalysis": { "topKeywords": [], "estimatedTraffic": "nivel" }
+    }
+  ]
+}`;
+      const supplemented = await generateJSON<{ competitors: Competitor[] }>(
+        supplementPrompt,
+        prompts.STRATEGY_SYSTEM_PROMPT,
+        { maxTokens: 4096, label: "2/12 Competidores adicionales" }
+      );
+      if (supplemented.competitors?.length > 0) {
+        competitors = [...competitors, ...supplemented.competitors.slice(0, missing)];
+        log("2/12", `Completados a ${competitors.length} competidores`);
+      }
+    } catch (err) {
+      log("2/12", `Suplemento parcial: ${(err as Error).message?.slice(0, 50)}`);
+    }
+  }
+
   log("2/12", `${competitors.length} competidores analizados`);
+  await paceDelay();
 
   // ─── Point 3: Comparative Analysis ───
   emit(3, TOTAL, "Generando analisis comparativo...");
   log("3/12", "Generando analisis comparativo...");
-  const compAnalysisResponse = await generate(
-    prompts.promptComparativeAnalysis(brand, competitors),
-    prompts.STRATEGY_SYSTEM_PROMPT,
-    { maxTokens: 4096 }
-  );
-  const { comparativeAnalysis } = parseJSON<{ comparativeAnalysis: string }>(compAnalysisResponse.text);
+  let comparativeAnalysis = "";
+  try {
+    const parsed = await generateJSON<{ comparativeAnalysis: string }>(
+      prompts.promptComparativeAnalysis(brand, competitors),
+      prompts.STRATEGY_SYSTEM_PROMPT,
+      { maxTokens: 4096, label: "3/12 Analisis comparativo" }
+    );
+    const rawCA = parsed.comparativeAnalysis;
+    if (typeof rawCA === "string" && rawCA.trim().length > 0) {
+      comparativeAnalysis = rawCA;
+    } else if (rawCA && typeof rawCA === "object") {
+      comparativeAnalysis = JSON.stringify(rawCA);
+    }
+  } catch (err) {
+    log("3/12", `Analisis comparativo parcial: ${(err as Error).message?.slice(0, 50)}`);
+  }
+  // Ensure comparativeAnalysis is never empty — use fallback if LLM failed or returned empty
+  if (!comparativeAnalysis || comparativeAnalysis.trim().length === 0) {
+    comparativeAnalysis = `Análisis comparativo del mercado de ${brand.industry || "la industria"} en ${brand.location || "la región"}. Se identificaron ${competitors.length} competidores principales. Se recomienda enfocarse en diferenciación a través de calidad de servicio y presencia digital.`;
+  }
+
+  await paceDelay();
 
   // ─── Point 4: Keyword Research (with web grounding) ───
   emit(4, TOTAL, "Investigando keywords estrategicas...");
@@ -146,97 +328,231 @@ export async function generateStrategy(
     location
   );
   let keywordGroups: KeywordGroup[] = [];
-  if (kwResult.success && Array.isArray(kwResult.data)) {
-    keywordGroups = kwResult.data;
+  if (kwResult.success) {
+    const rawKw = kwResult.data;
+    if (Array.isArray(rawKw)) {
+      keywordGroups = rawKw;
+    } else if (rawKw && typeof rawKw === "object") {
+      keywordGroups = (rawKw as any).keywordGroups || (rawKw as any).keyword_groups || [];
+    }
+
+    if (keywordGroups.length > 0) {
+      try {
+        const refined = await generateJSON<{ keywordGroups: KeywordGroup[] }>(
+          prompts.promptKeywords(brand, keywordGroups),
+          prompts.STRATEGY_SYSTEM_PROMPT,
+          { maxTokens: 4096, label: "4/12 Refinar keywords" }
+        );
+        if (refined.keywordGroups?.length > 0) {
+          keywordGroups = refined.keywordGroups;
+        }
+      } catch {}
+    }
+  }
+
+  // If still no keywords, generate directly
+  if (keywordGroups.length === 0) {
+    log("4/12", "Sin keywords web, generando con IA...");
     try {
-      const kwRefine = await generate(
-        prompts.promptKeywords(brand, keywordGroups),
+      const parsed = await generateJSON<{ keywordGroups: KeywordGroup[] }>(
+        prompts.promptKeywords(brand, []),
         prompts.STRATEGY_SYSTEM_PROMPT,
-        { maxTokens: 8192 }
+        { maxTokens: 4096, label: "4/12 Keywords directas" }
       );
-      const refined = parseJSON<{ keywordGroups: KeywordGroup[] }>(kwRefine.text);
-      keywordGroups = refined.keywordGroups;
-    } catch {}
+      if (parsed.keywordGroups?.length > 0) {
+        keywordGroups = parsed.keywordGroups;
+      }
+    } catch (err) {
+      log("4/12", `Keywords directas fallaron: ${(err as Error).message?.slice(0, 50)}`);
+    }
   }
   log("4/12", `${keywordGroups.length} grupos de keywords`);
+  await paceDelay();
 
   // ─── Point 5: Strategic Conclusions ───
   emit(5, TOTAL, "Formulando conclusiones estrategicas...");
   log("5/12", "Conclusiones estrategicas...");
-  const conclusionsResponse = await generate(
-    prompts.promptStrategicConclusions(brand, competitors, keywordGroups),
-    prompts.STRATEGY_SYSTEM_PROMPT,
-    { maxTokens: 4096 }
-  );
-  const { strategicConclusions } = parseJSON<{ strategicConclusions: string[] }>(conclusionsResponse.text);
+  let strategicConclusions: string[] = [];
+  try {
+    const parsed = await generateJSON<{ strategicConclusions: string[] }>(
+      prompts.promptStrategicConclusions(brand, competitors, keywordGroups),
+      prompts.STRATEGY_SYSTEM_PROMPT,
+      { maxTokens: 4096, label: "5/12 Conclusiones estrategicas" }
+    );
+    const normConclusions = normalizeStrArr(parsed.strategicConclusions);
+    if (normConclusions.length > 0) strategicConclusions = normConclusions;
+  } catch (err) {
+    log("5/12", `Conclusiones parciales: ${(err as Error).message?.slice(0, 50)}`);
+    strategicConclusions = [
+      `El mercado de ${brand.industry} en ${brand.location} presenta oportunidades significativas de crecimiento digital.`,
+      `La competencia tiene debilidades en presencia digital que ${brand.companyName} puede aprovechar.`,
+      "La diferenciación a través de contenido de valor y experiencia de marca será clave.",
+      "Se recomienda una estrategia omnicanal con enfoque en redes sociales y SEO local.",
+    ];
+  }
+
+  await paceDelay();
 
   // ─── Point 6: Differentiation ───
   emit(6, TOTAL, "Proponiendo estrategias de diferenciacion...");
   log("6/12", "Diferenciacion...");
-  const diffResponse = await generate(
-    prompts.promptDifferentiation(brand, strategicConclusions),
-    prompts.STRATEGY_SYSTEM_PROMPT,
-    { maxTokens: 4096 }
-  );
-  const { differentiationProposals } = parseJSON<{ differentiationProposals: string[] }>(diffResponse.text);
+  let differentiationProposals: string[] = [];
+  try {
+    const parsed = await generateJSON<{ differentiationProposals: string[] }>(
+      prompts.promptDifferentiation(brand, strategicConclusions),
+      prompts.STRATEGY_SYSTEM_PROMPT,
+      { maxTokens: 4096, label: "6/12 Diferenciacion" }
+    );
+    const normDiff = normalizeStrArr(parsed.differentiationProposals);
+    if (normDiff.length > 0) differentiationProposals = normDiff;
+  } catch (err) {
+    log("6/12", `Diferenciacion parcial: ${(err as Error).message?.slice(0, 50)}`);
+    differentiationProposals = [
+      "Posicionamiento premium basado en calidad y experiencia de marca.",
+      "Contenido educativo y storytelling auténtico como diferenciador.",
+      "Presencia digital superior con UX optimizada y atención personalizada.",
+      "Programa de fidelización y comunidad de marca activa.",
+    ];
+  }
+
+  await paceDelay();
 
   // ─── Point 7: Brand Design ───
   emit(7, TOTAL, "Definiendo diseno de marca...");
   log("7/12", "Diseno de marca...");
-  const brandResponse = await generate(
-    prompts.promptBrandDesign(brand),
-    prompts.STRATEGY_SYSTEM_PROMPT,
-    { maxTokens: 2048 }
-  );
-  const brandDesignData = parseJSON<{
-    personality: string;
-    values: string[];
-    guidelines: string;
-    styleReferences: string[];
-  }>(brandResponse.text);
+  let brandDesignData = {
+    personality: `${brand.companyName} proyecta una imagen moderna, profesional y cercana.`,
+    values: ["Calidad", "Innovación", "Cercanía", "Profesionalismo"],
+    guidelines: "Comunicación clara, visual moderna y consistente en todos los canales.",
+    styleReferences: ["Diseño minimalista", "Fotografía profesional", "Tipografía moderna"],
+  };
+  try {
+    const parsed = await generateJSON<{
+      personality: string;
+      values: string[];
+      guidelines: string;
+      styleReferences: string[];
+    }>(
+      prompts.promptBrandDesign(brand),
+      prompts.STRATEGY_SYSTEM_PROMPT,
+      { maxTokens: 2048, label: "7/12 Diseno de marca" }
+    );
+    {
+        const normValues = normalizeStrArr(parsed.values);
+        const normRefs = normalizeStrArr(parsed.styleReferences);
+        brandDesignData = {
+          personality: (typeof parsed.personality === "string" ? parsed.personality : null) || brandDesignData.personality,
+          values: normValues.length > 0 ? normValues : brandDesignData.values,
+          guidelines: (typeof parsed.guidelines === "string" ? parsed.guidelines : null) || brandDesignData.guidelines,
+          styleReferences: normRefs.length > 0 ? normRefs : brandDesignData.styleReferences,
+        };
+      }
+  } catch (err) {
+    log("7/12", `Diseno parcial: ${(err as Error).message?.slice(0, 50)}`);
+  }
+
+  await paceDelay();
 
   // ─── Point 8: Content Strategy ───
   emit(8, TOTAL, "Creando estrategia de contenido...");
   log("8/12", "Estrategia de contenido...");
-  const csResponse = await generate(
-    prompts.promptContentStrategy(brand, services),
-    prompts.STRATEGY_SYSTEM_PROMPT,
-    { maxTokens: 2048 }
-  );
-  const { contentStrategy } = parseJSON<{ contentStrategy: MarketingStrategy["contentStrategy"] }>(csResponse.text);
+  let contentStrategy: MarketingStrategy["contentStrategy"] = {
+    targetAudience: ["Público general interesado en " + brand.industry],
+    painPoints: ["Falta de opciones de calidad", "Desconocimiento de la marca"],
+    channels: ["Instagram", "Facebook", "Google My Business", "TikTok"],
+    focusAreas: ["Branding", "Contenido educativo", "Engagement en redes"],
+    tone: "Profesional pero cercano, informativo y aspiracional.",
+  };
+  try {
+    const parsed = await generateJSON<{ contentStrategy: MarketingStrategy["contentStrategy"] }>(
+      prompts.promptContentStrategy(brand, services),
+      prompts.STRATEGY_SYSTEM_PROMPT,
+      { maxTokens: 2048, label: "8/12 Estrategia contenido" }
+    );
+    if (parsed.contentStrategy && typeof parsed.contentStrategy === "object") {
+        const cs = parsed.contentStrategy;
+        const normAudience = normalizeStrArr(cs.targetAudience);
+        const normPains = normalizeStrArr(cs.painPoints);
+        const normChannels = normalizeStrArr(cs.channels);
+        const normFocus = normalizeStrArr(cs.focusAreas);
+        contentStrategy = {
+          targetAudience: normAudience.length > 0 ? normAudience : contentStrategy.targetAudience,
+          painPoints: normPains.length > 0 ? normPains : contentStrategy.painPoints,
+          channels: normChannels.length > 0 ? normChannels : contentStrategy.channels,
+          focusAreas: normFocus.length > 0 ? normFocus : contentStrategy.focusAreas,
+          tone: (typeof cs.tone === "string" ? cs.tone : null) || contentStrategy.tone,
+        };
+      }
+  } catch (err) {
+    log("8/12", `Estrategia contenido parcial: ${(err as Error).message?.slice(0, 50)}`);
+  }
+
+  await paceDelay();
 
   // ─── Point 9: Content Pillars ───
   emit(9, TOTAL, "Definiendo pilares de contenido...");
   log("9/12", "Pilares de contenido...");
-  const pillarsResponse = await generate(
-    prompts.promptContentPillars(brand, contentStrategy),
-    prompts.STRATEGY_SYSTEM_PROMPT,
-    { maxTokens: 2048 }
-  );
-  const { contentPillars } = parseJSON<{ contentPillars: MarketingStrategy["contentPillars"] }>(pillarsResponse.text);
+  let contentPillars: MarketingStrategy["contentPillars"] = [
+    { name: `Expertise en ${brand.industry}`, percentage: 35, description: `Contenido que posiciona a ${brand.companyName} como autoridad en ${brand.industry}: guías, análisis de mercado, datos del sector.`, topics: [`Guías de ${brand.industry}`, "Análisis de tendencias", "Datos del mercado", "Tips para clientes", "Preguntas frecuentes", "Errores comunes"] },
+    { name: "Casos de Éxito y Confianza", percentage: 25, description: "Testimonios, casos reales, resultados medibles que generan confianza y credibilidad.", topics: ["Testimonios de clientes", "Antes y después", "Resultados medibles", "Proceso paso a paso", "Reviews y calificaciones"] },
+    { name: "Servicios y Soluciones", percentage: 25, description: `Contenido sobre los servicios de ${brand.companyName}, cómo funcionan y qué los diferencia de la competencia.`, topics: ["Descripción de servicios", "Ventajas competitivas", "Comparativas", "Promociones", "Novedades"] },
+    { name: "Cultura y Comunidad", percentage: 15, description: "Humaniza la marca: equipo, valores, eventos, vida cotidiana de la empresa.", topics: ["Detrás de cámaras", "Equipo de trabajo", "Eventos del sector", "Tendencias", "Contenido interactivo"] },
+  ];
+  try {
+    const parsed = await generateJSON<{ contentPillars: MarketingStrategy["contentPillars"] }>(
+      prompts.promptContentPillars(brand, contentStrategy),
+      prompts.STRATEGY_SYSTEM_PROMPT,
+      { maxTokens: 2048, label: "9/12 Pilares contenido" }
+    );
+    if (Array.isArray(parsed.contentPillars) && parsed.contentPillars.length > 0) {
+        contentPillars = parsed.contentPillars;
+      }
+  } catch (err) {
+    log("9/12", `Pilares parciales: ${(err as Error).message?.slice(0, 50)}`);
+  }
+
+  await paceDelay();
 
   // ─── Point 10: Content Grid ───
   emit(10, TOTAL, "Armando grilla de contenido semanal...");
   log("10/12", "Grilla de contenido...");
-  const gridResponse = await generate(
-    prompts.promptContentGrid(brand, contentPillars),
-    prompts.STRATEGY_SYSTEM_PROMPT,
-    { maxTokens: 4096 }
-  );
-  const { contentGrid } = parseJSON<{ contentGrid: MarketingStrategy["contentGrid"] }>(gridResponse.text);
+  let contentGrid: MarketingStrategy["contentGrid"] = [
+    { day: "Lunes", platform: "Instagram", contentType: "Carrusel", topic: `Tips del sector ${brand.industry}`, pillar: contentPillars[0]?.name || "Educativo", caption: "¿Sabías que...?" },
+    { day: "Martes", platform: "LinkedIn", contentType: "Post", topic: "Caso de éxito de cliente", pillar: contentPillars[1]?.name || "Confianza", caption: "Así ayudamos a nuestro cliente a lograr..." },
+    { day: "Miércoles", platform: "Instagram", contentType: "Reel", topic: `Proceso de trabajo en ${brand.companyName}`, pillar: contentPillars[0]?.name || "Educativo", caption: "Mira cómo hacemos..." },
+    { day: "Jueves", platform: "Blog", contentType: "Artículo", topic: `Guía de ${brand.industry} en ${brand.location || "tu zona"}`, pillar: contentPillars[0]?.name || "Educativo", caption: "Todo lo que necesitas saber sobre..." },
+    { day: "Viernes", platform: "TikTok", contentType: "Reel", topic: "Tendencia del sector", pillar: contentPillars[2]?.name || "Entretenimiento", caption: "Lo que nadie te dice sobre..." },
+    { day: "Sábado", platform: "Instagram", contentType: "Story", topic: "Detrás de cámaras del equipo", pillar: contentPillars[2]?.name || "Marca", caption: "Un día en la vida de..." },
+    { day: "Domingo", platform: "Facebook", contentType: "Post", topic: "Reflexión semanal y comunidad", pillar: contentPillars[1]?.name || "Comunidad", caption: "Esta semana aprendimos que..." },
+  ];
+  try {
+    const parsed = await generateJSON<{ contentGrid: MarketingStrategy["contentGrid"] }>(
+      prompts.promptContentGrid(brand, contentPillars),
+      prompts.STRATEGY_SYSTEM_PROMPT,
+      { maxTokens: 4096, label: "10/12 Grilla contenido" }
+    );
+    if (Array.isArray(parsed.contentGrid) && parsed.contentGrid.length > 0) {
+        contentGrid = parsed.contentGrid;
+      }
+  } catch (err) {
+    log("10/12", `Grilla parcial: ${(err as Error).message?.slice(0, 50)}`);
+  }
+
+  await paceDelay();
 
   // ─── Point 11: KPIs ───
   emit(11, TOTAL, "Definiendo KPIs...");
   log("11/12", "KPIs...");
   let kpis: MarketingStrategy["kpis"] = [];
   try {
-    const kpiResponse = await generate(
+    const parsed = await generateJSON<{ kpis: MarketingStrategy["kpis"] }>(
       prompts.promptKPIs(brand),
       prompts.STRATEGY_SYSTEM_PROMPT,
-      { maxTokens: 4096 }
+      { maxTokens: 4096, label: "11/12 KPIs" }
     );
-    const parsed = parseJSON<{ kpis: MarketingStrategy["kpis"] }>(kpiResponse.text);
-    kpis = parsed.kpis;
+    if (Array.isArray(parsed.kpis) && parsed.kpis.length > 0) {
+        kpis = parsed.kpis;
+      }
   } catch (err) {
     log("11/12", `KPIs parciales: ${(err as Error).message?.slice(0, 50)}`);
     kpis = [
@@ -247,19 +563,27 @@ export async function generateStrategy(
     ];
   }
 
+  await paceDelay();
+
   // ─── Point 12: Timeline + Conclusions ───
   emit(12, TOTAL, "Creando cronograma y conclusiones finales...");
   log("12/12", "Cronograma y conclusiones...");
 
-  let implementationTimeline: MarketingStrategy["implementationTimeline"];
+  let implementationTimeline: MarketingStrategy["implementationTimeline"] = [
+    { phase: "Fase 1: Fundamentos", weeks: "Semanas 1-4", tasks: ["Configurar plataformas digitales", "Definir identidad visual", "Crear perfiles sociales", "Planificar contenido inicial"] },
+    { phase: "Fase 2: Lanzamiento", weeks: "Semanas 5-8", tasks: ["Publicar contenido SEO", "Iniciar campanas en redes sociales", "Configurar analiticas", "Primera ronda de email marketing"] },
+    { phase: "Fase 3: Crecimiento", weeks: "Semanas 9-16", tasks: ["Escalar produccion de contenido", "Optimizar campanas pagadas", "Desarrollar partnerships", "Analizar metricas y ajustar"] },
+    { phase: "Fase 4: Optimizacion", weeks: "Semanas 17-24", tasks: ["A/B testing de campanas", "Refinar segmentacion", "Expandir canales exitosos", "Reporte trimestral de resultados"] },
+  ];
   try {
-    const timeResponse = await generate(
+    const parsed = await generateJSON<{ implementationTimeline: MarketingStrategy["implementationTimeline"] }>(
       prompts.promptTimeline(brand),
       prompts.STRATEGY_SYSTEM_PROMPT,
-      { maxTokens: 2048 }
+      { maxTokens: 2048, label: "12/12 Timeline" }
     );
-    const parsed = parseJSON<{ implementationTimeline: MarketingStrategy["implementationTimeline"] }>(timeResponse.text);
-    implementationTimeline = parsed.implementationTimeline;
+    if (Array.isArray(parsed.implementationTimeline) && parsed.implementationTimeline.length > 0) {
+        implementationTimeline = parsed.implementationTimeline;
+      }
   } catch (err) {
     console.log(`  [Timeline] Parse failed, using defaults: ${(err as Error).message?.slice(0, 50)}`);
     implementationTimeline = [
@@ -270,32 +594,33 @@ export async function generateStrategy(
     ];
   }
 
-  let conclusions: string[];
-  let recommendations: string[];
+  let conclusions: string[] = [
+    `${brand.companyName} tiene oportunidades significativas de crecimiento en el mercado digital.`,
+    "La estrategia de contenido multicanal permitira alcanzar al publico objetivo de forma efectiva.",
+    "La diferenciacion a traves de contenido de valor sera clave para destacar frente a la competencia.",
+    "Se recomienda implementar las fases de manera progresiva para optimizar recursos.",
+  ];
+  let recommendations: string[] = [
+    "Priorizar la creacion de contenido SEO optimizado para captar trafico organico.",
+    "Invertir en redes sociales con contenido visual de alta calidad.",
+    "Establecer un sistema de medicion continua para ajustar la estrategia.",
+    "Considerar alianzas estrategicas para ampliar el alcance.",
+  ];
   try {
-    const strategySummary = `${brand.companyName}: ${description.summary.slice(0, 200)}. Competidores: ${competitors.map((c) => c.name).join(", ")}. Pilares: ${contentPillars.map((p) => p.name).join(", ")}`;
-    const finalResponse = await generate(
+    const strategySummary = `${brand.companyName}: ${(description?.summary || "Estrategia de marketing digital").slice(0, 200)}. Competidores: ${competitors.map((c) => c?.name || "?").join(", ")}. Pilares: ${contentPillars.map((p) => p?.name || "?").join(", ")}`;
+    const parsed = await generateJSON<{ conclusions: string[]; recommendations: string[] }>(
       prompts.promptConclusions(brand, strategySummary),
       prompts.STRATEGY_SYSTEM_PROMPT,
-      { maxTokens: 2048 }
+      { maxTokens: 2048, label: "12/12 Conclusiones finales" }
     );
-    const parsed = parseJSON<{ conclusions: string[]; recommendations: string[] }>(finalResponse.text);
-    conclusions = parsed.conclusions;
-    recommendations = parsed.recommendations;
+    if (Array.isArray(parsed.conclusions) && parsed.conclusions.length > 0) {
+      conclusions = parsed.conclusions;
+    }
+    if (Array.isArray(parsed.recommendations) && parsed.recommendations.length > 0) {
+      recommendations = parsed.recommendations;
+    }
   } catch (err) {
     console.log(`  [Conclusions] Parse failed, using defaults: ${(err as Error).message?.slice(0, 50)}`);
-    conclusions = [
-      `${brand.companyName} tiene oportunidades significativas de crecimiento en el mercado digital.`,
-      "La estrategia de contenido multicanal permitira alcanzar al publico objetivo de forma efectiva.",
-      "La diferenciacion a traves de contenido de valor sera clave para destacar frente a la competencia.",
-      "Se recomienda implementar las fases de manera progresiva para optimizar recursos.",
-    ];
-    recommendations = [
-      "Priorizar la creacion de contenido SEO optimizado para captar trafico organico.",
-      "Invertir en redes sociales con contenido visual de alta calidad.",
-      "Establecer un sistema de medicion continua para ajustar la estrategia.",
-      "Considerar alianzas estrategicas para ampliar el alcance.",
-    ];
   }
 
   // ─── Assemble Strategy ───
@@ -332,19 +657,6 @@ export async function generateStrategy(
 
   console.log(chalk.green.bold(`\n  Estrategia guardada con ID: ${id}`));
 
-  // Generate PPTX
-  console.log(chalk.yellow(`\n  Generando presentacion PPTX...\n`));
-  try {
-    const { generatePptx } = await import("../tools/pptx-generator.js");
-    const pptxResult = await generatePptx(strategy);
-    if (pptxResult.success) {
-      const data = pptxResult.data as Record<string, unknown>;
-      console.log(chalk.green(`  PPTX generado: ${data.filePath}`));
-      console.log(chalk.green(`  Slides: ${data.slideCount}`));
-    }
-  } catch (err) {
-    console.log(chalk.yellow(`  PPTX no generado: ${(err as Error).message?.slice(0, 80)}`));
-  }
-
+  // PPTX is generated in background by server.ts after sendComplete — not here
   return strategy;
 }

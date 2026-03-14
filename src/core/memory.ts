@@ -104,6 +104,16 @@ export function listStrategies(): { id: number; companyName: string; createdAt: 
   return d.prepare("SELECT id, company_name as companyName, created_at as createdAt FROM strategies ORDER BY id DESC").all() as { id: number; companyName: string; createdAt: string }[];
 }
 
+export function deleteStrategy(id: number): boolean {
+  const d = getDb();
+  // Cascade delete related records first (no FK cascade in SQLite by default)
+  d.prepare("DELETE FROM generated_content WHERE strategy_id = ?").run(id);
+  d.prepare("DELETE FROM conversation_history WHERE strategy_id = ?").run(id);
+  d.prepare("DELETE FROM brand_assets WHERE strategy_id = ?").run(id);
+  const result = d.prepare("DELETE FROM strategies WHERE id = ?").run(id);
+  return result.changes > 0;
+}
+
 // ─── Content CRUD ───
 
 export function saveContent(content: GeneratedContent): number {

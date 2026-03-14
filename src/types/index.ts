@@ -37,6 +37,7 @@ export interface ScrapedCompetitorData {
 export interface Competitor {
   name: string;
   website: string;
+  urlVerified?: boolean;
   services: string[];
   strengths: string[];
   weaknesses: string[];
