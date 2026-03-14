@@ -4,6 +4,22 @@ let currentStrategy = null;
 let eventSource = null;
 const sessionId = crypto.randomUUID();
 
+// ─── Safety helpers for LLM output rendering ───
+function safeArr(val) {
+  return Array.isArray(val) ? val : [];
+}
+function safeStr(val) {
+  if (typeof val === 'string') return val;
+  if (val == null) return '';
+  if (typeof val === 'object') {
+    return val.name || val.description || val.title || val.text || val.term || JSON.stringify(val);
+  }
+  return String(val);
+}
+function safeStrArr(val) {
+  return safeArr(val).map(safeStr);
+}
+
 // ─── Provider Diagnostics Panel ───
 const PROVIDER_LABELS = {
   claude: 'Claude',
@@ -544,19 +560,21 @@ function renderDescription(s) {
 
 function renderCompetitors(s) {
   if (!s.competitors || !s.competitors.length) return '<p>No disponible</p>';
-  return s.competitors.map(c => {
-    const seoKeywords = (c.seoAnalysis && c.seoAnalysis.topKeywords) || [];
-    const opportunities = c.opportunitiesForUs || [];
+  return safeArr(s.competitors).map(c => {
+    const seoKeywords = safeStrArr(c.seoAnalysis?.topKeywords);
+    const opportunities = safeStrArr(c.opportunitiesForUs);
+    const strengths = safeStrArr(c.strengths);
+    const weaknesses = safeStrArr(c.weaknesses);
     return `
     <div class="competitor-card">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;">
-        <h4 style="margin-bottom:0;">${c.name}</h4>
-        <a class="competitor-website" href="${c.website}" target="_blank">
+        <h4 style="margin-bottom:0;">${safeStr(c.name)}</h4>
+        <a class="competitor-website" href="${safeStr(c.website)}" target="_blank">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-          ${c.website}
+          ${safeStr(c.website)}
         </a>
       </div>
-      <p class="analysis">${c.detailedAnalysis || ''}</p>
+      <p class="analysis">${safeStr(c.detailedAnalysis)}</p>
       ${seoKeywords.length ? `
         <div style="margin-bottom:14px;">
           ${seoKeywords.map(kw => `<span class="seo-tag">${kw}</span>`).join('')}
@@ -565,11 +583,11 @@ function renderCompetitors(s) {
       <div class="sw-grid">
         <div class="sw-col strengths">
           <h5>Fortalezas</h5>
-          <ul>${(c.strengths || []).map(s => `<li>${s}</li>`).join('')}</ul>
+          <ul>${strengths.map(s => `<li>${s}</li>`).join('')}</ul>
         </div>
         <div class="sw-col weaknesses">
           <h5>Debilidades</h5>
-          <ul>${(c.weaknesses || []).map(w => `<li>${w}</li>`).join('')}</ul>
+          <ul>${weaknesses.map(w => `<li>${w}</li>`).join('')}</ul>
         </div>
       </div>
       ${opportunities.length ? `
@@ -584,22 +602,24 @@ function renderCompetitors(s) {
 }
 
 function renderComparative(s) {
-  return `<p>${s.comparativeAnalysis || 'No disponible'}</p>`;
+  const ca = s.comparativeAnalysis;
+  const text = typeof ca === 'string' ? ca : (ca ? JSON.stringify(ca) : 'No disponible');
+  return `<p>${text}</p>`;
 }
 
 function renderKeywords(s) {
   if (!s.keywordGroups || !s.keywordGroups.length) return '<p>No disponible</p>';
-  return s.keywordGroups.map(g => `
+  return safeArr(s.keywordGroups).map(g => `
     <div style="margin-bottom:20px;">
-      <h4 style="font-size:14px;margin-bottom:12px;">${g.category}</h4>
+      <h4 style="font-size:14px;margin-bottom:12px;">${safeStr(g.category)}</h4>
       <div class="table-scroll">
         <table class="strategy-table">
           <thead>
             <tr><th>Keyword</th><th>Intención</th><th>Volumen</th><th>Dificultad</th></tr>
           </thead>
           <tbody>
-            ${(g.keywords || []).map(k => `
-              <tr><td>${k.term}</td><td>${k.intent || '-'}</td><td>${k.volume || '-'}</td><td>${k.difficulty || '-'}</td></tr>
+            ${safeArr(g.keywords).map(k => `
+              <tr><td>${safeStr(k.term || k)}</td><td>${safeStr(k.intent) || '-'}</td><td>${safeStr(k.volume) || '-'}</td><td>${safeStr(k.difficulty) || '-'}</td></tr>
             `).join('')}
           </tbody>
         </table>
@@ -609,13 +629,15 @@ function renderKeywords(s) {
 }
 
 function renderConclusions(s) {
-  if (!s.strategicConclusions || !s.strategicConclusions.length) return '<p>No disponible</p>';
-  return `<ul>${s.strategicConclusions.map(c => `<li>${c}</li>`).join('')}</ul>`;
+  const items = safeStrArr(s.strategicConclusions);
+  if (!items.length) return '<p>No disponible</p>';
+  return `<ul>${items.map(c => `<li>${c}</li>`).join('')}</ul>`;
 }
 
 function renderDifferentiation(s) {
-  if (!s.differentiationProposals || !s.differentiationProposals.length) return '<p>No disponible</p>';
-  return `<ul>${s.differentiationProposals.map(d => `<li>${d}</li>`).join('')}</ul>`;
+  const items = safeStrArr(s.differentiationProposals);
+  if (!items.length) return '<p>No disponible</p>';
+  return `<ul>${items.map(d => `<li>${d}</li>`).join('')}</ul>`;
 }
 
 function renderBrand(s) {
@@ -646,7 +668,7 @@ function renderBrand(s) {
     <div class="table-scroll">
       <table class="strategy-table">
         <thead><tr><th>Servicio</th><th>Descripción</th></tr></thead>
-        <tbody>${services.map(sv => `<tr><td style="font-weight:600;">${sv.name}</td><td>${sv.description}</td></tr>`).join('')}</tbody>
+        <tbody>${safeArr(services).map(sv => `<tr><td style="font-weight:600;">${safeStr(sv.name)}</td><td>${safeStr(sv.description)}</td></tr>`).join('')}</tbody>
       </table>
     </div>
     <div style="margin-top:20px;">
@@ -656,7 +678,7 @@ function renderBrand(s) {
       <div style="margin-top:12px;">
         <h5 style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Valores</h5>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          ${(bd.values || []).map(v => `<span class="brand-tag">${v}</span>`).join('')}
+          ${safeStrArr(bd.values).map(v => `<span class="brand-tag">${v}</span>`).join('')}
         </div>
       </div>
       <div style="margin-top:12px;">
@@ -673,52 +695,54 @@ function renderContentStrategy(s) {
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
       <div>
         <h4 style="font-size:13px;color:var(--accent);margin-bottom:10px;">Audiencia Objetivo</h4>
-        <ul>${(cs.targetAudience || []).map(a => `<li>${a}</li>`).join('')}</ul>
+        <ul>${safeStrArr(cs.targetAudience).map(a => `<li>${a}</li>`).join('')}</ul>
       </div>
       <div>
         <h4 style="font-size:13px;color:var(--error);margin-bottom:10px;">Puntos de Dolor</h4>
-        <ul>${(cs.painPoints || []).map(p => `<li>${p}</li>`).join('')}</ul>
+        <ul>${safeStrArr(cs.painPoints).map(p => `<li>${p}</li>`).join('')}</ul>
       </div>
     </div>
     <div style="margin-top:16px;">
       <h4 style="font-size:13px;color:var(--success);margin-bottom:10px;">Canales</h4>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        ${(cs.channels || []).map(c => `<span class="topic-tag">${c}</span>`).join('')}
+        ${safeStrArr(cs.channels).map(c => `<span class="topic-tag">${c}</span>`).join('')}
       </div>
     </div>
     <div style="margin-top:16px;padding:12px;background:var(--bg-input);border-radius:8px;">
       <h4 style="font-size:13px;color:var(--warning);margin-bottom:8px;">Tono de Comunicación</h4>
-      <p style="margin:0;">${cs.tone || ''}</p>
+      <p style="margin:0;">${safeStr(cs.tone)}</p>
     </div>
   `;
 }
 
 function renderPillars(s) {
-  if (!s.contentPillars || !s.contentPillars.length) return '<p>No disponible</p>';
-  return s.contentPillars.map(p => `
+  const pillars = safeArr(s.contentPillars);
+  if (!pillars.length) return '<p>No disponible</p>';
+  return pillars.map(p => `
     <div class="pillar-item">
       <div class="pillar-header">
-        <h4>${p.name}</h4>
-        <span class="percent">${p.percentage}%</span>
+        <h4>${safeStr(p.name)}</h4>
+        <span class="percent">${p.percentage ?? 'N/A'}%</span>
       </div>
-      <div class="pillar-bar"><div class="pillar-bar-fill" style="width:${p.percentage}%"></div></div>
-      <p class="pillar-desc">${p.description || ''}</p>
+      <div class="pillar-bar"><div class="pillar-bar-fill" style="width:${Number(p.percentage) || 0}%"></div></div>
+      <p class="pillar-desc">${safeStr(p.description)}</p>
       <div class="pillar-topics">
-        ${(p.topics || []).map(t => `<span class="topic-tag">${t}</span>`).join('')}
+        ${safeStrArr(p.topics).map(t => `<span class="topic-tag">${t}</span>`).join('')}
       </div>
     </div>
   `).join('');
 }
 
 function renderGrid(s) {
-  if (!s.contentGrid || !s.contentGrid.length) return '<p>No disponible</p>';
+  const grid = safeArr(s.contentGrid);
+  if (!grid.length) return '<p>No disponible</p>';
   return `
     <div class="table-scroll">
       <table class="strategy-table">
         <thead><tr><th>Día</th><th>Plataforma</th><th>Tipo</th><th>Tema</th><th>Pilar</th></tr></thead>
         <tbody>
-          ${s.contentGrid.map(g => `
-            <tr><td>${g.day}</td><td>${g.platform}</td><td>${g.contentType}</td><td>${g.topic}</td><td>${g.pillar || '-'}</td></tr>
+          ${grid.map(g => `
+            <tr><td>${safeStr(g.day)}</td><td>${safeStr(g.platform)}</td><td>${safeStr(g.contentType)}</td><td>${safeStr(g.topic)}</td><td>${safeStr(g.pillar) || '-'}</td></tr>
           `).join('')}
         </tbody>
       </table>
@@ -727,7 +751,8 @@ function renderGrid(s) {
 }
 
 function renderKPIs(s) {
-  if (!s.kpis || !s.kpis.length) return '<p>No disponible</p>';
+  const kpiList = safeArr(s.kpis);
+  if (!kpiList.length) return '<p>No disponible</p>';
   const catColors = {
     'atraccion': 'attraction', 'atracción': 'attraction',
     'seo': 'attraction',
@@ -749,8 +774,8 @@ function renderKPIs(s) {
 
   // Group KPIs by category
   const grouped = {};
-  s.kpis.forEach(k => {
-    const cat = k.category || 'General';
+  kpiList.forEach(k => {
+    const cat = safeStr(k.category) || 'General';
     if (!grouped[cat]) grouped[cat] = [];
     grouped[cat].push(k);
   });
@@ -761,9 +786,9 @@ function renderKPIs(s) {
     rows += `<tr><td colspan="3" class="kpi-category-header ${badgeClass}">${category}</td></tr>`;
     rows += kpis.map(k => `
       <tr>
-        <td style="font-weight:600;">${k.metric}</td>
-        <td>${k.description || ''}</td>
-        <td style="font-family:var(--mono);color:var(--accent);">${k.target || '-'}</td>
+        <td style="font-weight:600;">${safeStr(k.metric) || '-'}</td>
+        <td>${safeStr(k.description)}</td>
+        <td style="font-family:var(--mono);color:var(--accent);">${safeStr(k.target) || '-'}</td>
       </tr>
     `).join('');
   }
@@ -781,19 +806,19 @@ function renderKPIs(s) {
 }
 
 function renderTimeline(s) {
-  const timeline = s.implementationTimeline || [];
-  const conclusions = s.conclusions || [];
-  const recs = s.recommendations || [];
+  const timeline = safeArr(s.implementationTimeline);
+  const conclusions = safeStrArr(s.conclusions);
+  const recs = safeStrArr(s.recommendations);
 
   return `
     <h4 style="margin-bottom:16px;">Cronograma de Implementación</h4>
     ${timeline.map(t => `
       <div style="margin-bottom:16px;padding:16px;background:var(--bg-input);border-radius:8px;border-left:3px solid var(--accent);">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-          <h5 style="font-size:14px;font-weight:600;">${t.phase}</h5>
-          <span style="font-size:12px;color:var(--accent);font-family:var(--mono);">${t.weeks}</span>
+          <h5 style="font-size:14px;font-weight:600;">${safeStr(t.phase)}</h5>
+          <span style="font-size:12px;color:var(--accent);font-family:var(--mono);">${safeStr(t.weeks)}</span>
         </div>
-        <ul>${(t.tasks || []).map(task => `<li>${task}</li>`).join('')}</ul>
+        <ul>${safeStrArr(t.tasks).map(task => `<li>${task}</li>`).join('')}</ul>
       </div>
     `).join('')}
 

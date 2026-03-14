@@ -160,7 +160,7 @@ export function promptStrategicConclusions(brand: BrandIdentity, competitors: Co
   return `Basado en el análisis competitivo y de keywords de "${brand.companyName}", formula 4 CONCLUSIONES ESTRATÉGICAS clave.
 
 Industria: ${brand.industry}
-Competidores: ${competitors.map((c) => `${c.name}: F[${c.strengths[0]}] D[${c.weaknesses[0]}]`).join("; ")}
+Competidores: ${competitors.map((c) => `${c.name || "?"}: F[${(c.strengths || [])[0] || "N/A"}] D[${(c.weaknesses || [])[0] || "N/A"}]`).join("; ")}
 Categorías de keywords: ${keywords.map((k) => k.category).join(", ")}
 
 Cada conclusión debe:
@@ -261,8 +261,8 @@ Retorna SOLO JSON:
 export function promptContentPillars(brand: BrandIdentity, contentStrategy: { targetAudience: string[]; painPoints: string[] }): string {
   return `Crea 3 pilares de contenido para "${brand.companyName}".
 
-Público objetivo: ${contentStrategy.targetAudience.join(", ")}
-Dolores: ${contentStrategy.painPoints.join(", ")}
+Público objetivo: ${(contentStrategy?.targetAudience || ["Público general"]).join(", ")}
+Dolores: ${(contentStrategy?.painPoints || ["Necesidad de servicios de calidad"]).join(", ")}
 
 Los 3 pilares deben sumar 100%. Cada pilar debe tener:
 - Nombre descriptivo

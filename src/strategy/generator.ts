@@ -75,6 +75,24 @@ function log(step: string, msg: string) {
   console.log(chalk.cyan(`  [${step}]`) + ` ${msg}`);
 }
 
+/** Normalize an LLM array: flatten objects to strings, ensure all items are strings. */
+function normalizeStrArr(arr: unknown): string[] {
+  if (!Array.isArray(arr)) return [];
+  const result: string[] = [];
+  for (const item of arr) {
+    if (typeof item === "string") {
+      result.push(item);
+    } else if (item && typeof item === "object") {
+      // LLM sometimes returns [{key: "value", key2: "value"}] — flatten values
+      const vals = Object.values(item as Record<string, unknown>);
+      for (const v of vals) {
+        if (typeof v === "string" && v.length > 3) result.push(v);
+      }
+    }
+  }
+  return result.length > 0 ? result : [];
+}
+
 // Delay between LLM steps to reduce rate limit pressure on free-tier providers
 const STEP_DELAY_MS = 1000;
 function paceDelay(): Promise<void> {
@@ -272,7 +290,9 @@ Retorna SOLO JSON:
       prompts.STRATEGY_SYSTEM_PROMPT,
       { maxTokens: 4096, label: "3/12 Analisis comparativo" }
     );
-    comparativeAnalysis = parsed.comparativeAnalysis;
+    comparativeAnalysis = typeof parsed.comparativeAnalysis === "string"
+      ? parsed.comparativeAnalysis
+      : (parsed.comparativeAnalysis ? JSON.stringify(parsed.comparativeAnalysis) : "");
   } catch (err) {
     log("3/12", `Analisis comparativo parcial: ${(err as Error).message?.slice(0, 50)}`);
     comparativeAnalysis = `Análisis comparativo del mercado de ${brand.industry} en ${brand.location}. Se identificaron ${competitors.length} competidores principales. Se recomienda enfocarse en diferenciación a través de calidad de servicio y presencia digital.`;
@@ -341,7 +361,8 @@ Retorna SOLO JSON:
       prompts.STRATEGY_SYSTEM_PROMPT,
       { maxTokens: 4096, label: "5/12 Conclusiones estrategicas" }
     );
-    strategicConclusions = parsed.strategicConclusions;
+    const normConclusions = normalizeStrArr(parsed.strategicConclusions);
+    if (normConclusions.length > 0) strategicConclusions = normConclusions;
   } catch (err) {
     log("5/12", `Conclusiones parciales: ${(err as Error).message?.slice(0, 50)}`);
     strategicConclusions = [
@@ -364,7 +385,8 @@ Retorna SOLO JSON:
       prompts.STRATEGY_SYSTEM_PROMPT,
       { maxTokens: 4096, label: "6/12 Diferenciacion" }
     );
-    differentiationProposals = parsed.differentiationProposals;
+    const normDiff = normalizeStrArr(parsed.differentiationProposals);
+    if (normDiff.length > 0) differentiationProposals = normDiff;
   } catch (err) {
     log("6/12", `Diferenciacion parcial: ${(err as Error).message?.slice(0, 50)}`);
     differentiationProposals = [
@@ -397,7 +419,16 @@ Retorna SOLO JSON:
       prompts.STRATEGY_SYSTEM_PROMPT,
       { maxTokens: 2048, label: "7/12 Diseno de marca" }
     );
-    brandDesignData = parsed;
+    {
+        const normValues = normalizeStrArr(parsed.values);
+        const normRefs = normalizeStrArr(parsed.styleReferences);
+        brandDesignData = {
+          personality: (typeof parsed.personality === "string" ? parsed.personality : null) || brandDesignData.personality,
+          values: normValues.length > 0 ? normValues : brandDesignData.values,
+          guidelines: (typeof parsed.guidelines === "string" ? parsed.guidelines : null) || brandDesignData.guidelines,
+          styleReferences: normRefs.length > 0 ? normRefs : brandDesignData.styleReferences,
+        };
+      }
   } catch (err) {
     log("7/12", `Diseno parcial: ${(err as Error).message?.slice(0, 50)}`);
   }
@@ -420,7 +451,20 @@ Retorna SOLO JSON:
       prompts.STRATEGY_SYSTEM_PROMPT,
       { maxTokens: 2048, label: "8/12 Estrategia contenido" }
     );
-    contentStrategy = parsed.contentStrategy;
+    if (parsed.contentStrategy && typeof parsed.contentStrategy === "object") {
+        const cs = parsed.contentStrategy;
+        const normAudience = normalizeStrArr(cs.targetAudience);
+        const normPains = normalizeStrArr(cs.painPoints);
+        const normChannels = normalizeStrArr(cs.channels);
+        const normFocus = normalizeStrArr(cs.focusAreas);
+        contentStrategy = {
+          targetAudience: normAudience.length > 0 ? normAudience : contentStrategy.targetAudience,
+          painPoints: normPains.length > 0 ? normPains : contentStrategy.painPoints,
+          channels: normChannels.length > 0 ? normChannels : contentStrategy.channels,
+          focusAreas: normFocus.length > 0 ? normFocus : contentStrategy.focusAreas,
+          tone: (typeof cs.tone === "string" ? cs.tone : null) || contentStrategy.tone,
+        };
+      }
   } catch (err) {
     log("8/12", `Estrategia contenido parcial: ${(err as Error).message?.slice(0, 50)}`);
   }
@@ -442,7 +486,9 @@ Retorna SOLO JSON:
       prompts.STRATEGY_SYSTEM_PROMPT,
       { maxTokens: 2048, label: "9/12 Pilares contenido" }
     );
-    contentPillars = parsed.contentPillars;
+    if (Array.isArray(parsed.contentPillars) && parsed.contentPillars.length > 0) {
+        contentPillars = parsed.contentPillars;
+      }
   } catch (err) {
     log("9/12", `Pilares parciales: ${(err as Error).message?.slice(0, 50)}`);
   }
@@ -467,7 +513,9 @@ Retorna SOLO JSON:
       prompts.STRATEGY_SYSTEM_PROMPT,
       { maxTokens: 4096, label: "10/12 Grilla contenido" }
     );
-    contentGrid = parsed.contentGrid;
+    if (Array.isArray(parsed.contentGrid) && parsed.contentGrid.length > 0) {
+        contentGrid = parsed.contentGrid;
+      }
   } catch (err) {
     log("10/12", `Grilla parcial: ${(err as Error).message?.slice(0, 50)}`);
   }
@@ -484,7 +532,9 @@ Retorna SOLO JSON:
       prompts.STRATEGY_SYSTEM_PROMPT,
       { maxTokens: 4096, label: "11/12 KPIs" }
     );
-    kpis = parsed.kpis;
+    if (Array.isArray(parsed.kpis) && parsed.kpis.length > 0) {
+        kpis = parsed.kpis;
+      }
   } catch (err) {
     log("11/12", `KPIs parciales: ${(err as Error).message?.slice(0, 50)}`);
     kpis = [
@@ -501,14 +551,21 @@ Retorna SOLO JSON:
   emit(12, TOTAL, "Creando cronograma y conclusiones finales...");
   log("12/12", "Cronograma y conclusiones...");
 
-  let implementationTimeline: MarketingStrategy["implementationTimeline"];
+  let implementationTimeline: MarketingStrategy["implementationTimeline"] = [
+    { phase: "Fase 1: Fundamentos", weeks: "Semanas 1-4", tasks: ["Configurar plataformas digitales", "Definir identidad visual", "Crear perfiles sociales", "Planificar contenido inicial"] },
+    { phase: "Fase 2: Lanzamiento", weeks: "Semanas 5-8", tasks: ["Publicar contenido SEO", "Iniciar campanas en redes sociales", "Configurar analiticas", "Primera ronda de email marketing"] },
+    { phase: "Fase 3: Crecimiento", weeks: "Semanas 9-16", tasks: ["Escalar produccion de contenido", "Optimizar campanas pagadas", "Desarrollar partnerships", "Analizar metricas y ajustar"] },
+    { phase: "Fase 4: Optimizacion", weeks: "Semanas 17-24", tasks: ["A/B testing de campanas", "Refinar segmentacion", "Expandir canales exitosos", "Reporte trimestral de resultados"] },
+  ];
   try {
     const parsed = await generateJSON<{ implementationTimeline: MarketingStrategy["implementationTimeline"] }>(
       prompts.promptTimeline(brand),
       prompts.STRATEGY_SYSTEM_PROMPT,
       { maxTokens: 2048, label: "12/12 Timeline" }
     );
-    implementationTimeline = parsed.implementationTimeline;
+    if (Array.isArray(parsed.implementationTimeline) && parsed.implementationTimeline.length > 0) {
+        implementationTimeline = parsed.implementationTimeline;
+      }
   } catch (err) {
     console.log(`  [Timeline] Parse failed, using defaults: ${(err as Error).message?.slice(0, 50)}`);
     implementationTimeline = [
@@ -519,31 +576,33 @@ Retorna SOLO JSON:
     ];
   }
 
-  let conclusions: string[];
-  let recommendations: string[];
+  let conclusions: string[] = [
+    `${brand.companyName} tiene oportunidades significativas de crecimiento en el mercado digital.`,
+    "La estrategia de contenido multicanal permitira alcanzar al publico objetivo de forma efectiva.",
+    "La diferenciacion a traves de contenido de valor sera clave para destacar frente a la competencia.",
+    "Se recomienda implementar las fases de manera progresiva para optimizar recursos.",
+  ];
+  let recommendations: string[] = [
+    "Priorizar la creacion de contenido SEO optimizado para captar trafico organico.",
+    "Invertir en redes sociales con contenido visual de alta calidad.",
+    "Establecer un sistema de medicion continua para ajustar la estrategia.",
+    "Considerar alianzas estrategicas para ampliar el alcance.",
+  ];
   try {
-    const strategySummary = `${brand.companyName}: ${description.summary.slice(0, 200)}. Competidores: ${competitors.map((c) => c.name).join(", ")}. Pilares: ${contentPillars.map((p) => p.name).join(", ")}`;
+    const strategySummary = `${brand.companyName}: ${(description?.summary || "Estrategia de marketing digital").slice(0, 200)}. Competidores: ${competitors.map((c) => c?.name || "?").join(", ")}. Pilares: ${contentPillars.map((p) => p?.name || "?").join(", ")}`;
     const parsed = await generateJSON<{ conclusions: string[]; recommendations: string[] }>(
       prompts.promptConclusions(brand, strategySummary),
       prompts.STRATEGY_SYSTEM_PROMPT,
       { maxTokens: 2048, label: "12/12 Conclusiones finales" }
     );
-    conclusions = parsed.conclusions;
-    recommendations = parsed.recommendations;
+    if (Array.isArray(parsed.conclusions) && parsed.conclusions.length > 0) {
+      conclusions = parsed.conclusions;
+    }
+    if (Array.isArray(parsed.recommendations) && parsed.recommendations.length > 0) {
+      recommendations = parsed.recommendations;
+    }
   } catch (err) {
     console.log(`  [Conclusions] Parse failed, using defaults: ${(err as Error).message?.slice(0, 50)}`);
-    conclusions = [
-      `${brand.companyName} tiene oportunidades significativas de crecimiento en el mercado digital.`,
-      "La estrategia de contenido multicanal permitira alcanzar al publico objetivo de forma efectiva.",
-      "La diferenciacion a traves de contenido de valor sera clave para destacar frente a la competencia.",
-      "Se recomienda implementar las fases de manera progresiva para optimizar recursos.",
-    ];
-    recommendations = [
-      "Priorizar la creacion de contenido SEO optimizado para captar trafico organico.",
-      "Invertir en redes sociales con contenido visual de alta calidad.",
-      "Establecer un sistema de medicion continua para ajustar la estrategia.",
-      "Considerar alianzas estrategicas para ampliar el alcance.",
-    ];
   }
 
   // ─── Assemble Strategy ───
