@@ -6,12 +6,13 @@ function sleep(ms: number): Promise<void> {
 }
 
 // Ordered by cost: free tier first, then paid models as fallback.
+// Free models change frequently — check https://openrouter.ai/models/?q=free
 const OPENROUTER_MODELS = [
-  "google/gemini-2.0-flash-exp:free",      // Free tier on OpenRouter (no credits needed)
-  "meta-llama/llama-3.3-70b-instruct:free", // Free tier on OpenRouter (no credits needed)
-  "google/gemini-2.0-flash-001",           // Very cheap (~$0.10/M tokens)
-  "meta-llama/llama-3.3-70b-instruct",     // Cheap
-  "anthropic/claude-sonnet-4",             // Premium (fallback)
+  "nvidia/nemotron-3-super-120b-a12b:free", // Free 120B MoE, only 12B active per token
+  "stepfun/step-3.5-flash:free",            // Free 196B MoE, 11B active per token
+  "nvidia/nemotron-3-nano-30b-a3b:free",    // Free 30B nano model
+  "google/gemini-2.0-flash-001",            // Very cheap (~$0.10/M tokens)
+  "meta-llama/llama-3.3-70b-instruct",      // Cheap
 ];
 
 export class OpenRouterProvider implements LLMProviderInterface {

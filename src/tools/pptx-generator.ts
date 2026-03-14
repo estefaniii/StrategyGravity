@@ -72,12 +72,12 @@ export async function generatePptx(strategy: MarketingStrategy): Promise<ToolRes
         fetchCompanyLogo(strategy.brandDesign?.identity?.website),
         fetchCompetitorLogos(strategy.competitors || []),
       ]);
-      const result = await Promise.race([
-        imagePromise,
-        new Promise<[null, Map<string, string>]>(resolve =>
-          setTimeout(() => { console.log("  [Images] Timeout global de imagenes (10s), continuando sin logos"); resolve([null, new Map()]); }, IMAGE_TIMEOUT)
-        ),
-      ]);
+      let timeoutId: ReturnType<typeof setTimeout>;
+      const timeoutPromise = new Promise<[null, Map<string, string>]>(resolve => {
+        timeoutId = setTimeout(() => { console.log("  [Images] Timeout global de imagenes (10s), continuando sin logos"); resolve([null, new Map()]); }, IMAGE_TIMEOUT);
+      });
+      const result = await Promise.race([imagePromise, timeoutPromise]);
+      clearTimeout(timeoutId!); // Cancel timeout if images won the race
       companyLogo = result[0];
       competitorLogos = result[1];
     } catch {
