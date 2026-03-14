@@ -98,6 +98,10 @@ function generatePptxInBackground(strategy: MarketingStrategy): void {
 function applyPreferences(brand: BrandIdentity, preferences: any): void {
   if (!preferences) return;
 
+  console.log(`  [Preferences] Recibido: industry=${preferences.industry}, country=${preferences.country}`);
+  console.log(`  [Preferences] Colores: ${JSON.stringify(preferences.colors)}`);
+  console.log(`  [Preferences] Fuentes: heading=${preferences.headingFont}, body=${preferences.bodyFont}`);
+
   if (preferences.country) brand.location = preferences.country;
   if (preferences.industry) brand.industry = preferences.industry;
 
@@ -106,15 +110,20 @@ function applyPreferences(brand: BrandIdentity, preferences: any): void {
     brand.description = preferences.description;
   }
 
-  if (preferences.colors?.primary && preferences.colors.primary !== "#000000") {
+  // Always apply user colors — no conditional checks needed
+  if (preferences.colors) {
     brand.colors = {
-      primary: preferences.colors.primary,
+      primary: preferences.colors.primary || brand.colors.primary,
       secondary: preferences.colors.secondary || brand.colors.secondary,
       accent: preferences.colors.accent || brand.colors.accent,
     };
   }
+
+  // Always apply user fonts
   if (preferences.headingFont) brand.fonts.heading = preferences.headingFont;
   if (preferences.bodyFont) brand.fonts.body = preferences.bodyFont;
+
+  console.log(`  [Preferences] Final: colors=${JSON.stringify(brand.colors)}, fonts=${JSON.stringify(brand.fonts)}`);
 }
 
 // ─── Generate Strategy from URL ───

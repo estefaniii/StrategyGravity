@@ -71,38 +71,75 @@ export async function researchCompetitors(
 
   try {
     // Step 1: Search Google for real competitors
-    console.log(`  [Research] Buscando competidores reales de "${companyName}"...`);
+    console.log(`  [Research] Buscando competidores reales de "${companyName}" en ${industry}...`);
 
-    // Natural search queries — EXACTLY how a real user would search Google
+    // Generate natural search queries — how a REAL USER would search Google
+    // Key insight: industry might be adjective ("Inmobiliario") so we need noun variants too
     const isRealLocation = location && !/mercado objetivo|no determinable|desconocid|unknown|n\/a/i.test(location);
     const queries: string[] = [];
 
+    // Create plural/noun variants of industry (e.g., "Inmobiliario" → "inmobiliarias")
+    const industryLower = industry.toLowerCase().trim();
+    const industryVariants: string[] = [industry];
+
+    // Generate natural plural/noun forms for common industry patterns
+    if (industryLower.endsWith("io") || industryLower.endsWith("ia")) {
+      // "Inmobiliario" → "inmobiliarias", "Tecnología" → stays
+      const base = industryLower.replace(/i[oa]$/, "");
+      industryVariants.push(`${base}ias`);    // inmobiliarias
+      industryVariants.push(`${base}ios`);    // inmobiliarios
+    }
+    if (!industryLower.startsWith("empresa")) {
+      industryVariants.push(`empresas de ${industryLower}`);   // "empresas de inmobiliario"
+    }
+    // Add "agencia(s) de" variant for service industries
+    if (/marketing|publicidad|diseño|consultora|legal|viaje|turismo/i.test(industryLower)) {
+      industryVariants.push(`agencias de ${industryLower}`);
+    }
+
     if (isRealLocation) {
-      // Primary: natural search query (e.g. "agencia de marketing en panamá")
-      queries.push(`${industry} en ${location}`);
-      // Secondary: "mejores" variant (e.g. "mejores agencias de marketing en panamá")
-      queries.push(`mejores ${industry} en ${location}`);
-      // Tertiary: plain combo (e.g. "agencia de marketing panamá")
-      queries.push(`${industry} ${location}`);
-      // Additional: target actual business websites
-      queries.push(`mejores empresas de ${industry} en ${location}`);
-      queries.push(`${industry} ${location} sitio oficial`);
       // Extract country from location for broader search
       const locationParts = location.split(',').map(s => s.trim());
       const country = locationParts[locationParts.length - 1] || location;
-      if (country !== location) {
-        queries.push(`${industry} en ${country}`);
+
+      // Use multiple industry variants for richer results
+      for (const variant of industryVariants.slice(0, 3)) {
+        queries.push(`mejores ${variant} en ${location}`);
       }
+      // Direct competitor search with company name context
+      queries.push(`competidores de ${companyName} ${location}`);
+      queries.push(`${companyName} alternativas ${location}`);
+      // Natural "empresas de X" format
+      queries.push(`empresas de ${industryLower} en ${location}`);
+      // Broader country search if location has city+country
+      if (country !== location) {
+        queries.push(`mejores ${industry} en ${country}`);
+      }
+      // "Top" / ranking searches that list actual companies
+      queries.push(`top ${industry} ${location} 2025 2026`);
     } else {
       queries.push(`mejores ${industry}`);
-      queries.push(`${industry} empresas`);
+      queries.push(`empresas de ${industryLower}`);
+      queries.push(`competidores de ${companyName}`);
     }
 
+    // Deduplicate queries (case-insensitive) and limit to 6
+    const seen = new Set<string>();
+    const uniqueQueries = queries.filter(q => {
+      const key = q.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).slice(0, 6);
+
+    console.log(`  [Research] Queries: ${uniqueQueries.join(" | ")}`);
+
     const allResults = [];
-    for (const query of queries) {
+    for (const query of uniqueQueries) {
       const results = await searchGoogle(query, 10);
       allResults.push(...results);
-      await delay(4000);
+      console.log(`  [Research] "${query}" → ${results.length} resultados`);
+      await delay(2500);  // Reduced from 4s — faster without hitting rate limits
     }
 
     // Filter out the company itself, social media, and non-business URLs
@@ -229,10 +266,11 @@ DATOS REALES EXTRAÍDOS DE SITIOS WEB:
 ${scrapedContext}
 
 REQUISITOS CRÍTICOS:
-- Debes retornar EXACTAMENTE 5 competidores en tu respuesta. Si hay más de 5 datos, selecciona los 5 más relevantes. Si hay menos de 5 datos de sitios web, complementa con tu conocimiento sobre competidores reales del sector ${industry} en ${location}.
+- Debes retornar EXACTAMENTE 5 competidores en tu respuesta. Si hay más de 5 datos, selecciona los 5 MÁS RELEVANTES (competidores directos del mismo sector, NO directorios ni agregadores).
+- Si hay menos de 5 datos de sitios web, COMPLEMENTA con tu conocimiento sobre competidores REALES y CONOCIDOS del sector ${industry} en ${location}. Estos deben ser empresas que un profesional de la industria reconocería de inmediato.
 - Solo incluye competidores que operen EN EL MISMO PAÍS/REGIÓN que ${companyName} (${location})
-- Deben ser empresas del MISMO SECTOR (${industry}) que compitan directamente
-- Si algún resultado no es un competidor real del mismo sector, reemplázalo con uno que sí lo sea
+- Deben ser empresas del MISMO SECTOR (${industry}) que compitan DIRECTAMENTE por el mismo tipo de cliente
+- FILTRA AGRESIVAMENTE: Si algún resultado es un directorio, blog, medio de noticias, o empresa de otro sector, REEMPLÁZALO con un competidor real que sí conozcas del sector ${industry} en ${location}
 - DEBILIDADES deben ser REALES y ESPECÍFICAS: analiza su sitio web, su tecnología, su contenido, su UX. ¿Su sitio es lento? ¿No tiene blog? ¿No aparece en redes sociales? ¿Diseño anticuado? ¿No tiene chat en vivo? ¿Precios no transparentes? Busca debilidades CONCRETAS basadas en los datos que ves.
 - OPORTUNIDADES para ${companyName} deben ser ACCIONABLES: explica exactamente qué puede hacer ${companyName} para ganar a esos clientes
 
@@ -289,12 +327,13 @@ async function researchCompetitorsWithLLM(
   const prompt = `Realiza un análisis competitivo PROFUNDO para "${companyName}" en el sector de ${industry}, ubicada en ${location}.
 
 REQUISITOS CRÍTICOS - LEE CON CUIDADO:
-1. Identifica los 5 competidores principales REALES que operan EN EL MISMO PAÍS (${location})
+1. Identifica los 5 competidores principales REALES y CONOCIDOS que operan EN EL MISMO PAÍS (${location})
 2. Deben ser empresas del MISMO SECTOR (${industry}) que compitan DIRECTAMENTE por el mismo cliente
-3. Sus URLs deben ser REALES y FUNCIONALES - NO inventes URLs. Si no conoces la URL exacta, usa el formato correcto del dominio
-4. Deben ser las empresas que aparecerían en los PRIMEROS RESULTADOS de Google al buscar "${industry} en ${location}"
-5. IMPORTANTE: Deben ser COMPETIDORES DIRECTOS - empresas que ofrecen los mismos servicios al mismo segmento objetivo
+3. Sus URLs deben ser REALES y FUNCIONALES - NO inventes URLs. Si no conoces la URL exacta, usa el formato de dominio más probable (empresa.com o empresa.com.PAIS)
+4. Deben ser las empresas que REALMENTE aparecen en los primeros resultados de Google al buscar "mejores ${industry} en ${location}" o "empresas de ${industry} ${location}"
+5. IMPORTANTE: Deben ser COMPETIDORES DIRECTOS - empresas que ofrecen los mismos servicios al mismo segmento objetivo. NO incluyas directorios, blogs, portales de noticias, ni empresas de otros sectores
 6. NO incluyas empresas internacionales gigantes a menos que tengan operación LOCAL en ${location}
+7. Piensa en las marcas que un profesional del sector ${industry} en ${location} reconocería INMEDIATAMENTE como competidores
 
 Para cada competidor incluye:
 - name: nombre REAL de la empresa

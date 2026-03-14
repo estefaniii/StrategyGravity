@@ -493,10 +493,10 @@ Retorna SOLO JSON:
   emit(9, TOTAL, "Definiendo pilares de contenido...");
   log("9/12", "Pilares de contenido...");
   let contentPillars: MarketingStrategy["contentPillars"] = [
-    { name: "Educativo", percentage: 30, description: "Contenido que informa y educa a la audiencia", topics: ["Tips", "Guías", "Tutoriales"] },
-    { name: "Inspiracional", percentage: 25, description: "Contenido que inspira y motiva", topics: ["Historias", "Testimonios", "Casos de éxito"] },
-    { name: "Promocional", percentage: 25, description: "Contenido que promueve productos y servicios", topics: ["Ofertas", "Lanzamientos", "Eventos"] },
-    { name: "Entretenimiento", percentage: 20, description: "Contenido ligero y entretenido", topics: ["Behind the scenes", "Tendencias", "Humor"] },
+    { name: `Expertise en ${brand.industry}`, percentage: 35, description: `Contenido que posiciona a ${brand.companyName} como autoridad en ${brand.industry}: guías, análisis de mercado, datos del sector.`, topics: [`Guías de ${brand.industry}`, "Análisis de tendencias", "Datos del mercado", "Tips para clientes", "Preguntas frecuentes", "Errores comunes"] },
+    { name: "Casos de Éxito y Confianza", percentage: 25, description: "Testimonios, casos reales, resultados medibles que generan confianza y credibilidad.", topics: ["Testimonios de clientes", "Antes y después", "Resultados medibles", "Proceso paso a paso", "Reviews y calificaciones"] },
+    { name: "Servicios y Soluciones", percentage: 25, description: `Contenido sobre los servicios de ${brand.companyName}, cómo funcionan y qué los diferencia de la competencia.`, topics: ["Descripción de servicios", "Ventajas competitivas", "Comparativas", "Promociones", "Novedades"] },
+    { name: "Cultura y Comunidad", percentage: 15, description: "Humaniza la marca: equipo, valores, eventos, vida cotidiana de la empresa.", topics: ["Detrás de cámaras", "Equipo de trabajo", "Eventos del sector", "Tendencias", "Contenido interactivo"] },
   ];
   try {
     const parsed = await generateJSON<{ contentPillars: MarketingStrategy["contentPillars"] }>(
@@ -517,13 +517,13 @@ Retorna SOLO JSON:
   emit(10, TOTAL, "Armando grilla de contenido semanal...");
   log("10/12", "Grilla de contenido...");
   let contentGrid: MarketingStrategy["contentGrid"] = [
-    { day: "Lunes", platform: "Instagram", contentType: "Carrusel", topic: "Tips de la semana", pillar: "Educativo" },
-    { day: "Martes", platform: "Facebook", contentType: "Post", topic: "Detrás de escena", pillar: "Entretenimiento" },
-    { day: "Miércoles", platform: "Instagram", contentType: "Reel", topic: "Producto destacado", pillar: "Promocional" },
-    { day: "Jueves", platform: "TikTok", contentType: "Video corto", topic: "Tendencia del sector", pillar: "Entretenimiento" },
-    { day: "Viernes", platform: "Instagram", contentType: "Story", topic: "Testimonios", pillar: "Inspiracional" },
-    { day: "Sábado", platform: "Facebook", contentType: "Post", topic: "Oferta del fin de semana", pillar: "Promocional" },
-    { day: "Domingo", platform: "Instagram", contentType: "Post", topic: "Reflexión semanal", pillar: "Inspiracional" },
+    { day: "Lunes", platform: "Instagram", contentType: "Carrusel", topic: `Tips del sector ${brand.industry}`, pillar: contentPillars[0]?.name || "Educativo", caption: "¿Sabías que...?" },
+    { day: "Martes", platform: "LinkedIn", contentType: "Post", topic: "Caso de éxito de cliente", pillar: contentPillars[1]?.name || "Confianza", caption: "Así ayudamos a nuestro cliente a lograr..." },
+    { day: "Miércoles", platform: "Instagram", contentType: "Reel", topic: `Proceso de trabajo en ${brand.companyName}`, pillar: contentPillars[0]?.name || "Educativo", caption: "Mira cómo hacemos..." },
+    { day: "Jueves", platform: "Blog", contentType: "Artículo", topic: `Guía de ${brand.industry} en ${brand.location || "tu zona"}`, pillar: contentPillars[0]?.name || "Educativo", caption: "Todo lo que necesitas saber sobre..." },
+    { day: "Viernes", platform: "TikTok", contentType: "Reel", topic: "Tendencia del sector", pillar: contentPillars[2]?.name || "Entretenimiento", caption: "Lo que nadie te dice sobre..." },
+    { day: "Sábado", platform: "Instagram", contentType: "Story", topic: "Detrás de cámaras del equipo", pillar: contentPillars[2]?.name || "Marca", caption: "Un día en la vida de..." },
+    { day: "Domingo", platform: "Facebook", contentType: "Post", topic: "Reflexión semanal y comunidad", pillar: contentPillars[1]?.name || "Comunidad", caption: "Esta semana aprendimos que..." },
   ];
   try {
     const parsed = await generateJSON<{ contentGrid: MarketingStrategy["contentGrid"] }>(

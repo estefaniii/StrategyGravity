@@ -245,6 +245,8 @@ async function submitQuestionnaire() {
     }
   };
 
+  console.log('[Questionnaire] Colors:', JSON.stringify(preferences.colors), 'Fonts:', preferences.headingFont, preferences.bodyFont);
+
   // Add preferences to the pending body
   const body = { ...pendingStrategyBody, preferences };
   const endpoint = pendingStrategyEndpoint;

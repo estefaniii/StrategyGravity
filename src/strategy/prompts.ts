@@ -244,43 +244,77 @@ Retorna SOLO JSON:
 
 // ─── Point 8: Content Strategy ───
 export function promptContentStrategy(brand: BrandIdentity, services: { name: string }[]): string {
-  return `Crea la estrategia de contenido para "${brand.companyName}" en ${brand.industry}.
+  return `Crea la estrategia de contenido DETALLADA y ESPECÍFICA para "${brand.companyName}" en ${brand.industry}.
 
-Servicios: ${services.map((s) => s.name).join(", ")}
+CONTEXTO DE LA EMPRESA:
+- Empresa: ${brand.companyName}
+- Industria: ${brand.industry}
+- Ubicación: ${brand.location || "No especificada"}
+- Descripción: ${brand.description || "No disponible"}
+- Servicios: ${services.map((s) => s.name).join(", ")}
+${brand.website ? `- Sitio web: ${brand.website}` : ""}
+
+INSTRUCCIONES PARA CADA CAMPO:
+
+1. targetAudience: Define 3-4 segmentos ESPECÍFICOS del público objetivo. Para CADA segmento incluye:
+   - Quiénes son (demografía, profesión, nivel socioeconómico)
+   - Qué buscan específicamente en ${brand.industry}
+   - Dónde consumen contenido (plataformas específicas)
+   Ejemplo: "Inversores extranjeros de 35-55 años que buscan propiedades residenciales premium en ${brand.location || "la región"}, activos en LinkedIn y portales inmobiliarios internacionales"
+
+2. painPoints: Lista 5-6 dolores REALES y ESPECÍFICOS del público objetivo en ${brand.industry}. NO genéricos. Deben ser problemas que un cliente REAL de ${brand.companyName} tendría.
+   Ejemplo: "Desconfianza en transacciones inmobiliarias internacionales por falta de transparencia legal y costos ocultos"
+
+3. channels: Lista los 5-6 canales MÁS EFECTIVOS para ${brand.industry} en ${brand.location || "el mercado"}, ordenados por prioridad. Para cada canal incluye breve justificación.
+   Ejemplo: "Instagram — plataforma visual ideal para mostrar propiedades y estilo de vida; alcanza al 70% del público objetivo"
+
+4. focusAreas: 4-5 áreas de enfoque ESPECÍFICAS para el contenido, combinando temas temáticos y geográficos relevantes para ${brand.industry}.
+   Ejemplo: "Guías de inversión inmobiliaria en ${brand.location || "la región"}", "Comparativas de zonas residenciales", "Proceso legal de compra para extranjeros"
+
+5. tone: Descripción DETALLADA del tono en 3-4 oraciones: cómo debe sonar la marca, qué vocabulario usar, qué evitar, y ejemplos de cómo se leería un post típico.
 
 Retorna SOLO JSON:
 {
   "contentStrategy": {
-    "targetAudience": ["segmento 1 con descripción detallada", "segmento 2", "segmento 3"],
-    "painPoints": ["dolor 1 con contexto y explicación", "dolor 2", "dolor 3", "dolor 4"],
-    "channels": ["LinkedIn", "Instagram", "TikTok", "Blog/SEO", "Facebook", "Google"],
-    "focusAreas": ["zona geográfica o temática 1", "zona 2", "zona 3"],
-    "tone": "Descripción del tono ideal en 2-3 oraciones - cómo debe sonar la marca"
+    "targetAudience": ["segmento 1 detallado con demografía y comportamiento", "segmento 2", "segmento 3", "segmento 4"],
+    "painPoints": ["dolor 1 específico con contexto del sector", "dolor 2", "dolor 3", "dolor 4", "dolor 5"],
+    "channels": ["Canal 1 — justificación breve", "Canal 2 — justificación", "Canal 3", "Canal 4", "Canal 5"],
+    "focusAreas": ["área temática específica 1", "área 2", "área 3", "área 4"],
+    "tone": "Descripción detallada del tono en 3-4 oraciones con ejemplos de vocabulario"
   }
 }`;
 }
 
 // ─── Point 9: Content Pillars ───
 export function promptContentPillars(brand: BrandIdentity, contentStrategy: { targetAudience: string[]; painPoints: string[] }): string {
-  return `Crea 3 pilares de contenido para "${brand.companyName}".
+  return `Crea 4 pilares de contenido ESPECÍFICOS para "${brand.companyName}" en ${brand.industry}.
 
-Público objetivo: ${(contentStrategy?.targetAudience || ["Público general"]).join(", ")}
-Dolores: ${(contentStrategy?.painPoints || ["Necesidad de servicios de calidad"]).join(", ")}
+CONTEXTO:
+- Empresa: ${brand.companyName} - ${brand.industry}
+- Ubicación: ${brand.location || "No especificada"}
+- Descripción: ${(brand.description || "").slice(0, 300)}
+- Público objetivo: ${(contentStrategy?.targetAudience || ["Público general"]).join("; ")}
+- Dolores del público: ${(contentStrategy?.painPoints || ["Necesidad de servicios de calidad"]).join("; ")}
 
-Los 3 pilares deben sumar 100%. Cada pilar debe tener:
-- Nombre descriptivo
-- Porcentaje del total de contenido
-- Descripción de 2-3 oraciones explicando qué cubre y por qué
-- 4-6 temas específicos
+INSTRUCCIONES:
+Los 4 pilares deben sumar 100% y ser ESPECÍFICOS para la industria de ${brand.industry}. NO uses pilares genéricos como "Educativo", "Inspiracional", "Promocional" — personalízalos para el sector.
+
+Cada pilar debe tener:
+- Nombre descriptivo y ESPECÍFICO para ${brand.industry} (ej: "Guías de Inversión" no "Contenido Educativo")
+- Porcentaje del total de contenido (los 4 deben sumar 100%)
+- Descripción de 3-4 oraciones explicando QUÉ tipo de contenido incluye, POR QUÉ es importante para el negocio, y CÓMO aporta valor al público objetivo
+- 6-8 temas CONCRETOS y ESPECÍFICOS (no genéricos). Cada tema debe ser lo suficientemente detallado como para que un community manager pueda crear contenido directamente.
+  Ejemplo MALO: "Tips del sector"
+  Ejemplo BUENO: "Guía paso a paso: cómo evaluar una propiedad antes de comprar en ${brand.location || "la zona"}"
 
 Retorna SOLO JSON:
 {
   "contentPillars": [
     {
-      "name": "Nombre del Pilar",
-      "percentage": 40,
-      "description": "Qué cubre este pilar y por qué es importante para la estrategia",
-      "topics": ["tema1", "tema2", "tema3", "tema4"]
+      "name": "Nombre Específico del Pilar para ${brand.industry}",
+      "percentage": 35,
+      "description": "Descripción detallada de 3-4 oraciones sobre qué cubre, por qué importa y cómo aporta valor",
+      "topics": ["tema concreto 1", "tema concreto 2", "tema 3", "tema 4", "tema 5", "tema 6"]
     }
   ]
 }`;
@@ -288,18 +322,37 @@ Retorna SOLO JSON:
 
 // ─── Point 10: Content Grid ───
 export function promptContentGrid(brand: BrandIdentity, pillars: { name: string; percentage: number }[]): string {
-  return `Crea una grilla de contenido semanal para "${brand.companyName}".
+  return `Crea una grilla de contenido semanal DETALLADA para "${brand.companyName}" en ${brand.industry}.
 
-Pilares: ${pillars.map((p) => `${p.name} (${p.percentage}%)`).join(", ")}
+CONTEXTO:
+- Empresa: ${brand.companyName} - ${brand.industry}
+- Ubicación: ${brand.location || "No especificada"}
+- Pilares: ${pillars.map((p) => `${p.name} (${p.percentage}%)`).join(", ")}
 
-Crea un calendario Lunes a Viernes con contenido específico para cada día.
-Incluye variedad de plataformas (Instagram, LinkedIn, TikTok, Blog) y tipos de contenido (Carrusel, Video, Reel, Post, Artículo).
+INSTRUCCIONES:
+Crea un calendario de Lunes a Domingo (7 días) con contenido ESPECÍFICO para cada día.
+- Cada entrada debe tener un topic TAN CONCRETO que un community manager pueda crear el contenido inmediatamente
+- Las captions deben ser HOOKS reales que generen engagement (preguntas, datos impactantes, storytelling)
+- Distribuye los pilares según sus porcentajes a lo largo de la semana
+- Varía las plataformas y tipos de contenido para maximizar alcance
+- Incluye al menos: 2 posts de Instagram, 1 LinkedIn, 1 TikTok/Reel, 1 Blog/SEO, 1 Story, 1 post adicional en la plataforma más relevante para ${brand.industry}
+
+TIPOS DE CONTENIDO: Carrusel, Reel/Video Corto, Story, Post, Artículo Blog, Infografía, Live/Directo, Thread
+
+Ejemplo de topic ESPECÍFICO:
+- MALO: "Tips de inversión"
+- BUENO: "5 errores que cometen los extranjeros al comprar su primera propiedad en ${brand.location || "la zona"} (y cómo evitarlos)"
 
 Retorna SOLO JSON:
 {
   "contentGrid": [
-    { "day": "Lunes", "platform": "Instagram", "contentType": "Carrusel", "topic": "tema específico", "pillar": "nombre del pilar", "caption": "idea de caption" },
-    { "day": "Martes", "platform": "LinkedIn", "contentType": "Post", "topic": "tema", "pillar": "pilar" }
+    { "day": "Lunes", "platform": "Instagram", "contentType": "Carrusel", "topic": "tema MUY específico y accionable", "pillar": "nombre del pilar", "caption": "Hook de caption que genere engagement - pregunta o dato impactante" },
+    { "day": "Martes", "platform": "LinkedIn", "contentType": "Post", "topic": "tema", "pillar": "pilar", "caption": "hook" },
+    { "day": "Miércoles", "platform": "TikTok", "contentType": "Reel", "topic": "tema", "pillar": "pilar", "caption": "hook" },
+    { "day": "Jueves", "platform": "Blog", "contentType": "Artículo", "topic": "tema", "pillar": "pilar", "caption": "título SEO" },
+    { "day": "Viernes", "platform": "Instagram", "contentType": "Reel", "topic": "tema", "pillar": "pilar", "caption": "hook" },
+    { "day": "Sábado", "platform": "Instagram", "contentType": "Story", "topic": "tema", "pillar": "pilar", "caption": "hook" },
+    { "day": "Domingo", "platform": "Facebook", "contentType": "Post", "topic": "tema", "pillar": "pilar", "caption": "hook" }
   ]
 }`;
 }
