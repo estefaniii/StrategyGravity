@@ -14,7 +14,7 @@ const PROVIDER_MAX_TOKENS: Record<string, number> = {};
 // Provider cooldown: skip providers that fail consistently to avoid wasting time on retries
 const PROVIDER_COOLDOWNS: Record<string, { until: number; consecutiveFailures: number }> = {};
 const COOLDOWN_THRESHOLD = 1;      // Failures before cooldown kicks in (1 = skip after first failure, since these are persistent)
-const COOLDOWN_DURATION = 30_000;   // 30 seconds cooldown (faster recovery for free tiers)
+const COOLDOWN_DURATION = 90_000;   // 90 seconds cooldown — keeps failed provider out long enough for other providers to handle multiple steps
 
 function recordProviderFailure(name: string): void {
   const info = PROVIDER_COOLDOWNS[name] || { until: 0, consecutiveFailures: 0 };

@@ -39,7 +39,7 @@ app.get("/api/progress/:sessionId", (req, res) => {
 
   // Keep-alive: send SSE comment every 15s to prevent mobile browsers from closing connection
   const keepAlive = setInterval(() => {
-    try { res.write(": keepalive\n\n"); } catch { clearInterval(keepAlive); }
+    try { res.write(`data: ${JSON.stringify({ type: "heartbeat" })}\n\n`); } catch { clearInterval(keepAlive); }
   }, 15000);
 
   req.on("close", () => {
@@ -73,8 +73,8 @@ function sendError(sessionId: string, error: string) {
   }
 }
 
-// Timeout wrapper for generation endpoints (10 minutes max)
-const GENERATION_TIMEOUT = 10 * 60 * 1000;
+// Timeout wrapper for generation endpoints (25 minutes max — accounts for rate limits and provider fallbacks)
+const GENERATION_TIMEOUT = 25 * 60 * 1000;
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -102,11 +102,8 @@ function applyPreferences(brand: BrandIdentity, preferences: any): void {
   if (preferences.industry) brand.industry = preferences.industry;
 
   if (preferences.description) {
-    if (!brand.description || brand.description.length < 30) {
-      brand.description = preferences.description;
-    } else {
-      brand.description = preferences.description + ". " + brand.description;
-    }
+    // User explicitly typed a description to correct the AI detection — always replace entirely
+    brand.description = preferences.description;
   }
 
   if (preferences.colors?.primary && preferences.colors.primary !== "#000000") {

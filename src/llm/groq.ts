@@ -6,10 +6,9 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-// Models ordered for free-tier reliability: 8B has 131K TPM (works), 70B has 6K TPM (always rate-limits)
+// Only 8B model — 70B has 6,000 TPM on free tier and ALWAYS rate-limits, wasting 6+ seconds per attempt
 const GROQ_MODELS = [
-  "llama-3.1-8b-instant",      // Higher rate limits (131072 TPM), reliable on free tier
-  "llama-3.3-70b-versatile",   // Better quality but strict limits (6000 TPM), fallback only
+  "llama-3.1-8b-instant",      // 131,072 TPM — only reliable model on free tier
 ];
 
 export class GroqProvider implements LLMProviderInterface {
@@ -36,7 +35,7 @@ export class GroqProvider implements LLMProviderInterface {
     let lastError: any;
 
     for (const model of GROQ_MODELS) {
-      const maxRetries = 1;
+      const maxRetries = 0; // No retries — rate limits don't clear in 3s; cascade to next provider immediately
       for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
           const response = await this.client.chat.completions.create({

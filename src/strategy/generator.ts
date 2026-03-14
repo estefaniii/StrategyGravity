@@ -302,12 +302,18 @@ Retorna SOLO JSON:
       prompts.STRATEGY_SYSTEM_PROMPT,
       { maxTokens: 4096, label: "3/12 Analisis comparativo" }
     );
-    comparativeAnalysis = typeof parsed.comparativeAnalysis === "string"
-      ? parsed.comparativeAnalysis
-      : (parsed.comparativeAnalysis ? JSON.stringify(parsed.comparativeAnalysis) : "");
+    const rawCA = parsed.comparativeAnalysis;
+    if (typeof rawCA === "string" && rawCA.trim().length > 0) {
+      comparativeAnalysis = rawCA;
+    } else if (rawCA && typeof rawCA === "object") {
+      comparativeAnalysis = JSON.stringify(rawCA);
+    }
   } catch (err) {
     log("3/12", `Analisis comparativo parcial: ${(err as Error).message?.slice(0, 50)}`);
-    comparativeAnalysis = `Análisis comparativo del mercado de ${brand.industry} en ${brand.location}. Se identificaron ${competitors.length} competidores principales. Se recomienda enfocarse en diferenciación a través de calidad de servicio y presencia digital.`;
+  }
+  // Ensure comparativeAnalysis is never empty — use fallback if LLM failed or returned empty
+  if (!comparativeAnalysis || comparativeAnalysis.trim().length === 0) {
+    comparativeAnalysis = `Análisis comparativo del mercado de ${brand.industry || "la industria"} en ${brand.location || "la región"}. Se identificaron ${competitors.length} competidores principales. Se recomienda enfocarse en diferenciación a través de calidad de servicio y presencia digital.`;
   }
 
   await paceDelay();

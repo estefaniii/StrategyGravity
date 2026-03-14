@@ -307,7 +307,7 @@ let sseReconnectAttempts = 0;
 const SSE_MAX_RECONNECTS = 3;
 const SSE_RECONNECT_DELAY = 3000;
 let generationTimeout = null;
-const GENERATION_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+const GENERATION_TIMEOUT_MS = 4 * 60 * 1000; // 4 minutes per step (resets on each progress update)
 
 const stepLabels = [
   'Descripción ejecutiva',
@@ -344,6 +344,16 @@ function connectSSE() {
   eventSource.onmessage = (event) => {
     const data = JSON.parse(event.data);
     sseReconnectAttempts = 0; // Reset on successful message
+
+    if (data.type === 'heartbeat') {
+      // Server is alive — reset timeout so we don't falsely timeout during long LLM calls
+      clearTimeout(generationTimeout);
+      generationTimeout = setTimeout(() => {
+        if (eventSource) eventSource.close();
+        showError('La generación está tomando demasiado tiempo. Por favor intenta nuevamente.');
+      }, GENERATION_TIMEOUT_MS);
+      return;
+    }
 
     if (data.type === 'progress') {
       const pct = Math.round((data.step / data.total) * 100);
@@ -432,10 +442,36 @@ function showRetryButton() {
         </svg>
         Reintentar
       </button>
+      <button class="btn-primary" style="background:#2563eb;" onclick="checkLastStrategy()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+        </svg>
+        Verificar ultima estrategia
+      </button>
       <button class="btn-secondary" onclick="newStrategy()">Volver al inicio</button>
     </div>
   `;
   progressSteps.insertAdjacentHTML('beforeend', retryHtml);
+}
+
+async function checkLastStrategy() {
+  try {
+    const res = await fetch('/api/strategy');
+    if (!res.ok) {
+      showToast('No se encontro ninguna estrategia guardada. Intenta reintentar la generacion.', 'error');
+      return;
+    }
+    const strategy = await res.json();
+    currentStrategy = strategy;
+    showToast('Estrategia encontrada. Cargando...', 'success');
+    setTimeout(() => {
+      document.getElementById('progress-section').classList.add('hidden');
+      showView('strategy');
+      renderStrategy(currentStrategy);
+    }, 1000);
+  } catch (err) {
+    showToast('Error al verificar. Intenta reintentar la generacion.', 'error');
+  }
 }
 
 function retryGeneration() {
@@ -620,8 +656,29 @@ function renderCompetitors(s) {
 
 function renderComparative(s) {
   const ca = s.comparativeAnalysis;
-  const text = typeof ca === 'string' ? ca : (ca ? JSON.stringify(ca) : 'No disponible');
-  return `<p>${text}</p>`;
+  let text = typeof ca === 'string' ? ca.trim() : (ca ? JSON.stringify(ca) : '');
+  if (!text || text === '{}' || text === '""') text = '';
+  if (!text) return '<p style="color:var(--text-muted);">No disponible</p>';
+  // If it's a JSON string (object was stringified), render it as formatted text
+  if (text.startsWith('{')) {
+    try {
+      const obj = JSON.parse(text);
+      return renderComparativeObject(obj);
+    } catch { /* not valid JSON, render as-is */ }
+  }
+  return `<p>${safeStr(text)}</p>`;
+}
+
+function renderComparativeObject(obj) {
+  if (typeof obj === 'string') return `<p>${safeStr(obj)}</p>`;
+  if (Array.isArray(obj)) return obj.map(item => renderComparativeObject(item)).join('');
+  if (typeof obj !== 'object' || !obj) return '';
+  return Object.entries(obj).map(([key, val]) => {
+    const label = key.replace(/([A-Z])/g, ' $1').replace(/_/g, ' ');
+    if (typeof val === 'string') return `<div style="margin-bottom:12px;"><strong>${safeStr(label)}:</strong> ${safeStr(val)}</div>`;
+    if (typeof val === 'object') return `<div style="margin-bottom:16px;"><h4 style="font-size:14px;margin-bottom:8px;text-transform:capitalize;">${safeStr(label)}</h4>${renderComparativeObject(val)}</div>`;
+    return `<div><strong>${safeStr(label)}:</strong> ${safeStr(String(val))}</div>`;
+  }).join('');
 }
 
 function renderKeywords(s) {
