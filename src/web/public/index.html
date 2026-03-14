@@ -191,11 +191,46 @@
           <button class="modal-close" onclick="closeQuestionnaire()">&times;</button>
         </div>
         <div class="modal-body">
+          <p style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--accent);margin-bottom:14px;">Información del negocio</p>
+
           <div class="form-group">
             <label>País / Ubicación *</label>
-            <input type="text" id="q-country" placeholder="Ej: Panamá, México D.F., Colombia" />
+            <input type="text" id="q-country" value="Panamá" placeholder="Ej: Panamá, México D.F., Colombia" />
             <small>Ayuda a contextualizar la estrategia para tu mercado</small>
           </div>
+
+          <div class="form-group">
+            <label>Sector / Industria *</label>
+            <select id="q-industry">
+              <option value="">— Selecciona un sector —</option>
+              <option value="Inmobiliario">Inmobiliario</option>
+              <option value="Tecnología">Tecnología</option>
+              <option value="Ventas y Comercio">Ventas y Comercio</option>
+              <option value="Salud y Bienestar">Salud y Bienestar</option>
+              <option value="Educación">Educación</option>
+              <option value="Gastronomía y Restaurantes">Gastronomía y Restaurantes</option>
+              <option value="Turismo y Hospitalidad">Turismo y Hospitalidad</option>
+              <option value="Servicios Financieros">Servicios Financieros</option>
+              <option value="Construcción">Construcción</option>
+              <option value="Consultoría">Consultoría</option>
+              <option value="E-commerce">E-commerce</option>
+              <option value="Moda y Belleza">Moda y Belleza</option>
+              <option value="Legal">Legal</option>
+              <option value="Marketing y Publicidad">Marketing y Publicidad</option>
+              <option value="Automotriz">Automotriz</option>
+              <option value="Otro">Otro (especificar)</option>
+            </select>
+            <input type="text" id="q-industry-other" placeholder="Especifica el sector" style="display:none;margin-top:8px;" />
+            <small>Define el sector para un análisis de competencia más preciso</small>
+          </div>
+
+          <div class="form-group">
+            <label>Descripción de la empresa (opcional)</label>
+            <textarea id="q-description" rows="3" placeholder="Ej: Somos una empresa de bienes raíces enfocada en propiedades de lujo en Panamá City, con 10 años de experiencia..."></textarea>
+            <small>Ayuda a generar una estrategia más precisa cuando la URL no da suficiente información</small>
+          </div>
+
+          <p style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin:20px 0 14px;padding-top:16px;border-top:1px solid var(--border);">Preferencias visuales</p>
 
           <div class="form-group">
             <label>Estilo de presentación</label>

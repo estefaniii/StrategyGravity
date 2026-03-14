@@ -191,7 +191,11 @@ function startStrategy(type) {
 // ─── Show Questionnaire Modal ───
 function showQuestionnaire(type, inputData) {
   // Reset form defaults
-  document.getElementById('q-country').value = '';
+  document.getElementById('q-country').value = 'Panamá';
+  document.getElementById('q-industry').value = '';
+  document.getElementById('q-industry-other').value = '';
+  document.getElementById('q-industry-other').style.display = 'none';
+  document.getElementById('q-description').value = '';
   document.getElementById('q-style').value = 'Moderno y Minimalista';
   document.getElementById('q-heading-font').value = 'Montserrat';
   document.getElementById('q-body-font').value = 'Inter';
@@ -216,8 +220,21 @@ async function submitQuestionnaire() {
   const country = document.getElementById('q-country').value.trim();
   if (!country) return alert('Por favor ingresa un país o ubicación');
 
+  const industrySelect = document.getElementById('q-industry').value;
+  if (!industrySelect) return alert('Por favor selecciona un sector / industria');
+
+  let industry = industrySelect;
+  if (industrySelect === 'Otro') {
+    industry = document.getElementById('q-industry-other').value.trim();
+    if (!industry) return alert('Por favor especifica el sector / industria');
+  }
+
+  const description = document.getElementById('q-description').value.trim();
+
   const preferences = {
     country: country,
+    industry: industry,
+    description: description || undefined,
     style: document.getElementById('q-style').value,
     headingFont: document.getElementById('q-heading-font').value,
     bodyFont: document.getElementById('q-body-font').value,
@@ -889,4 +906,19 @@ async function loadHistory() {
 // ─── Init ───
 document.addEventListener('DOMContentLoaded', () => {
   loadHistory();
+
+  // Industry "Otro" toggle
+  const industrySelect = document.getElementById('q-industry');
+  if (industrySelect) {
+    industrySelect.addEventListener('change', function() {
+      const otherInput = document.getElementById('q-industry-other');
+      if (this.value === 'Otro') {
+        otherInput.style.display = 'block';
+        otherInput.focus();
+      } else {
+        otherInput.style.display = 'none';
+        otherInput.value = '';
+      }
+    });
+  }
 });

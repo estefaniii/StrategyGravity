@@ -213,9 +213,12 @@ Descripción: ${brand.description}
 
 Lista 4-8 servicios con descripciones profesionales de 2-3 oraciones cada uno.
 
+IMPORTANTE: El PRIMER servicio de la lista DEBE ser "Diseño de Marca" (branding, identidad visual, logotipo, manual de marca). Descríbelo como un servicio premium que incluye creación o renovación de identidad visual: logotipo, paleta de colores, tipografía, papelería corporativa y manual de marca. Los demás servicios deben ser específicos de la industria de ${brand.industry}.
+
 Retorna SOLO JSON:
 {
   "services": [
+    { "name": "Diseño de Marca", "description": "Descripción profesional del servicio de branding e identidad visual..." },
     { "name": "Nombre del Servicio", "description": "Descripción profesional de 2-3 oraciones del servicio y su valor" }
   ]
 }`;

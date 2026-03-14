@@ -173,6 +173,18 @@ export async function generateStrategy(
     prompts.STRATEGY_SYSTEM_PROMPT,
     { maxTokens: 2048, label: "prep Servicios" }
   );
+
+  // Ensure "Diseño de Marca" is always present
+  const hasBrandDesign = services.some((s: any) =>
+    /dise[nñ]o\s+de\s+marca/i.test(s?.name || "")
+  );
+  if (!hasBrandDesign) {
+    services.unshift({
+      name: "Diseño de Marca",
+      description: `Servicio integral de identidad visual para ${brand.companyName}, incluyendo diseño de logotipo, paleta de colores, tipografía, papelería corporativa y manual de marca que refleje los valores y posicionamiento de la empresa en el sector de ${brand.industry}.`,
+    });
+  }
+
   await paceDelay();
 
   // ─── Point 2: Competitor Research (REAL web search + scraping) ───

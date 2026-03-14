@@ -94,6 +94,32 @@ function generatePptxInBackground(strategy: MarketingStrategy): void {
     .catch(err => console.log(`  PPTX no generado: ${(err as Error).message?.slice(0, 80)}`));
 }
 
+// ─── Apply user preferences to brand identity ───
+function applyPreferences(brand: BrandIdentity, preferences: any): void {
+  if (!preferences) return;
+
+  if (preferences.country) brand.location = preferences.country;
+  if (preferences.industry) brand.industry = preferences.industry;
+
+  if (preferences.description) {
+    if (!brand.description || brand.description.length < 30) {
+      brand.description = preferences.description;
+    } else {
+      brand.description = preferences.description + ". " + brand.description;
+    }
+  }
+
+  if (preferences.colors?.primary && preferences.colors.primary !== "#000000") {
+    brand.colors = {
+      primary: preferences.colors.primary,
+      secondary: preferences.colors.secondary || brand.colors.secondary,
+      accent: preferences.colors.accent || brand.colors.accent,
+    };
+  }
+  if (preferences.headingFont) brand.fonts.heading = preferences.headingFont;
+  if (preferences.bodyFont) brand.fonts.body = preferences.bodyFont;
+}
+
 // ─── Generate Strategy from URL ───
 app.post("/api/strategy/url", async (req, res) => {
   const { url, sessionId, preferences } = req.body;
@@ -108,20 +134,7 @@ app.post("/api/strategy/url", async (req, res) => {
     }
 
     const brand = brandResult.data as BrandIdentity;
-
-    // Apply user preferences
-    if (preferences) {
-      if (preferences.country) brand.location = preferences.country;
-      if (preferences.colors?.primary && preferences.colors.primary !== '#000000') {
-        brand.colors = {
-          primary: preferences.colors.primary,
-          secondary: preferences.colors.secondary || brand.colors.secondary,
-          accent: preferences.colors.accent || brand.colors.accent,
-        };
-      }
-      if (preferences.headingFont) brand.fonts.heading = preferences.headingFont;
-      if (preferences.bodyFont) brand.fonts.body = preferences.bodyFont;
-    }
+    applyPreferences(brand, preferences);
 
     sendProgress(sessionId, 0, 12, `Marca detectada: ${brand.companyName}. Iniciando estrategia...`);
 
@@ -156,20 +169,7 @@ app.post("/api/strategy/instagram", async (req, res) => {
     }
 
     const brand = brandResult.data as BrandIdentity;
-
-    // Apply user preferences
-    if (preferences) {
-      if (preferences.country) brand.location = preferences.country;
-      if (preferences.colors?.primary && preferences.colors.primary !== '#000000') {
-        brand.colors = {
-          primary: preferences.colors.primary,
-          secondary: preferences.colors.secondary || brand.colors.secondary,
-          accent: preferences.colors.accent || brand.colors.accent,
-        };
-      }
-      if (preferences.headingFont) brand.fonts.heading = preferences.headingFont;
-      if (preferences.bodyFont) brand.fonts.body = preferences.bodyFont;
-    }
+    applyPreferences(brand, preferences);
 
     res.json({ status: "generating", companyName: brand.companyName });
 
@@ -201,20 +201,7 @@ app.post("/api/strategy/description", async (req, res) => {
     }
 
     const brand = brandResult.data as BrandIdentity;
-
-    // Apply user preferences
-    if (preferences) {
-      if (preferences.country) brand.location = preferences.country;
-      if (preferences.colors?.primary && preferences.colors.primary !== '#000000') {
-        brand.colors = {
-          primary: preferences.colors.primary,
-          secondary: preferences.colors.secondary || brand.colors.secondary,
-          accent: preferences.colors.accent || brand.colors.accent,
-        };
-      }
-      if (preferences.headingFont) brand.fonts.heading = preferences.headingFont;
-      if (preferences.bodyFont) brand.fonts.body = preferences.bodyFont;
-    }
+    applyPreferences(brand, preferences);
 
     res.json({ status: "generating", companyName: brand.companyName });
 
