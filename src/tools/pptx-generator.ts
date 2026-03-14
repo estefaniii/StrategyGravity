@@ -20,6 +20,22 @@ function truncate(text: string, max: number): string {
   return text.length > max ? text.slice(0, max - 3) + "..." : text;
 }
 
+/** Safely coerce any value to string — LLM may return objects instead of strings */
+function toStr(val: unknown): string {
+  if (typeof val === "string") return val;
+  if (val && typeof val === "object") {
+    // Try common object shapes: { name, description }, { title, ... }, etc.
+    const obj = val as Record<string, unknown>;
+    if (obj.name && obj.description) return `${obj.name}: ${obj.description}`;
+    if (obj.title && obj.description) return `${obj.title}: ${obj.description}`;
+    if (obj.name) return String(obj.name);
+    if (obj.title) return String(obj.title);
+    if (obj.text) return String(obj.text);
+    return JSON.stringify(val);
+  }
+  return val == null ? "" : String(val);
+}
+
 // ─── Color helpers ───
 function hexToRgb(hex: string): [number, number, number] {
   const h = hex.replace("#", "");
@@ -195,7 +211,7 @@ export async function generatePptx(strategy: MarketingStrategy): Promise<ToolRes
       cs.addText(comp.name.toUpperCase(), { x: 0.8, y: 0.4, w: 10.5, h: 0.7, fontSize: 17, color: PRIMARY, bold: true, fontFace: HF, charSpacing: 5 });
 
       if (comp.services?.length > 0) {
-        cs.addText(comp.services.slice(0, 4).join("  ·  "), { x: 0.8, y: 1.05, w: 11.73, h: 0.3, fontSize: 9, color: TEXT_LIGHT, fontFace: BF, italic: true });
+        cs.addText(comp.services.slice(0, 4).map(s => toStr(s)).join("  ·  "), { x: 0.8, y: 1.05, w: 11.73, h: 0.3, fontSize: 9, color: TEXT_LIGHT, fontFace: BF, italic: true });
       }
       cs.addShape(pptx.ShapeType.rect, { x: 0.8, y: 1.45, w: 11.73, h: 0.008, fill: { color: LIGHT_GRAY } });
 
@@ -207,12 +223,12 @@ export async function generatePptx(strategy: MarketingStrategy): Promise<ToolRes
       // Fortalezas (left)
       cs.addShape(pptx.ShapeType.rect, { x: 0.8, y: 4.4, w: 5.9, h: 2.3, fill: { color: STRENGTH_BG }, rectRadius: 0.05 });
       cs.addText("Fortalezas:", { x: 1, y: 4.5, w: 5.5, h: 0.3, fontSize: 10, color: STRENGTH_GREEN, bold: true, fontFace: HF });
-      cs.addText(comp.strengths.slice(0, 3).map((s) => `•  ${truncate(s, 140)}`).join("\n"), { x: 1, y: 4.85, w: 5.5, h: 1.7, fontSize: 9, color: TEXT_DARK, fontFace: BF, lineSpacingMultiple: 1.35, valign: "top", wrap: true });
+      cs.addText(comp.strengths.slice(0, 3).map((s) => `•  ${truncate(toStr(s), 140)}`).join("\n"), { x: 1, y: 4.85, w: 5.5, h: 1.7, fontSize: 9, color: TEXT_DARK, fontFace: BF, lineSpacingMultiple: 1.35, valign: "top", wrap: true });
 
       // Oportunidad (right)
       cs.addShape(pptx.ShapeType.rect, { x: 7, y: 4.4, w: 5.53, h: 2.3, fill: { color: ACCENT_LIGHT }, rectRadius: 0.05 });
       cs.addText(`Oportunidad para ${strategy.companyName}:`, { x: 7.2, y: 4.5, w: 5.13, h: 0.3, fontSize: 10, color: ACCENT, bold: true, fontFace: HF });
-      cs.addText((comp.opportunitiesForUs || []).slice(0, 2).map((o) => `•  ${truncate(o, 180)}`).join("\n"), { x: 7.2, y: 4.85, w: 5.13, h: 1.7, fontSize: 9, color: TEXT_DARK, fontFace: BF, lineSpacingMultiple: 1.35, valign: "top", wrap: true });
+      cs.addText((comp.opportunitiesForUs || []).slice(0, 2).map((o) => `•  ${truncate(toStr(o), 180)}`).join("\n"), { x: 7.2, y: 4.85, w: 5.13, h: 1.7, fontSize: 9, color: TEXT_DARK, fontFace: BF, lineSpacingMultiple: 1.35, valign: "top", wrap: true });
 
       // Website link
       if (comp.website) {
@@ -246,7 +262,7 @@ export async function generatePptx(strategy: MarketingStrategy): Promise<ToolRes
       if (comp.weaknesses?.length > 0) {
         seo.addShape(pptx.ShapeType.rect, { x: 7.5, y: 3.4, w: 4.83, h: 3.2, fill: { color: WEAKNESS_BG }, rectRadius: 0.05 });
         seo.addText("Debilidades:", { x: 7.7, y: 3.5, w: 4.43, h: 0.3, fontSize: 10, color: WEAKNESS_RED, bold: true, fontFace: HF });
-        seo.addText(comp.weaknesses.slice(0, 3).map((w) => `•  ${truncate(w, 140)}`).join("\n"), { x: 7.7, y: 3.85, w: 4.43, h: 2.5, fontSize: 9, color: TEXT_DARK, fontFace: BF, lineSpacingMultiple: 1.35, valign: "top", wrap: true });
+        seo.addText(comp.weaknesses.slice(0, 3).map((w) => `•  ${truncate(toStr(w), 140)}`).join("\n"), { x: 7.7, y: 3.85, w: 4.43, h: 2.5, fontSize: 9, color: TEXT_DARK, fontFace: BF, lineSpacingMultiple: 1.35, valign: "top", wrap: true });
       }
 
       if (comp.website) {
@@ -301,7 +317,8 @@ export async function generatePptx(strategy: MarketingStrategy): Promise<ToolRes
     concl.background = { color: WHITE };
     addTitle(concl, "Conclusiones Estratégicas");
 
-    strategy.strategicConclusions.slice(0, 4).forEach((conclusion, i) => {
+    strategy.strategicConclusions.slice(0, 4).forEach((raw, i) => {
+      const conclusion = toStr(raw);
       const y = 1.5 + i * 1.35;
       const colonIdx = conclusion.indexOf(":");
       if (colonIdx > 0 && colonIdx < 80) {
@@ -323,7 +340,8 @@ export async function generatePptx(strategy: MarketingStrategy): Promise<ToolRes
     diff.background = { color: WHITE };
     addTitle(diff, `¿Dónde se puede diferenciar ${strategy.companyName}?`);
 
-    strategy.differentiationProposals.slice(0, 4).forEach((proposal, i) => {
+    strategy.differentiationProposals.slice(0, 4).forEach((raw, i) => {
+      const proposal = toStr(raw);
       const y = 1.5 + i * 1.35;
       const colonIdx = proposal.indexOf(":");
       if (colonIdx > 0 && colonIdx < 80) {
@@ -534,7 +552,8 @@ export async function generatePptx(strategy: MarketingStrategy): Promise<ToolRes
     fin.addShape(pptx.ShapeType.rect, { x: 0.8, y: 1.4, w: 5.7, h: 5.2, fill: { color: PRIMARY_LIGHT }, rectRadius: 0.08 });
     fin.addText("CONCLUSIONES", { x: 1, y: 1.5, w: 5.3, h: 0.35, fontSize: 10, color: PRIMARY, bold: true, fontFace: HF, charSpacing: 3 });
     fin.addShape(pptx.ShapeType.rect, { x: 1, y: 1.85, w: 1.5, h: 0.01, fill: { color: PRIMARY } });
-    (strategy.conclusions || []).slice(0, 4).forEach((c, i) => {
+    (strategy.conclusions || []).slice(0, 4).forEach((raw, i) => {
+      const c = toStr(raw);
       const y = 2.1 + i * 1.05;
       fin.addShape(pptx.ShapeType.rect, { x: 1, y: y + 0.03, w: 0.08, h: 0.08, fill: { color: ACCENT } });
       fin.addText(truncate(c, 240), { x: 1.3, y, w: 4.9, h: 0.95, fontSize: 9, color: TEXT_DARK, fontFace: BF, lineSpacingMultiple: 1.3, valign: "top", wrap: true });
@@ -544,7 +563,8 @@ export async function generatePptx(strategy: MarketingStrategy): Promise<ToolRes
     fin.addShape(pptx.ShapeType.rect, { x: 6.8, y: 1.4, w: 5.73, h: 5.2, fill: { color: ACCENT_LIGHT }, rectRadius: 0.08 });
     fin.addText("RECOMENDACIONES", { x: 7, y: 1.5, w: 5.33, h: 0.35, fontSize: 10, color: ACCENT, bold: true, fontFace: HF, charSpacing: 3 });
     fin.addShape(pptx.ShapeType.rect, { x: 7, y: 1.85, w: 1.5, h: 0.01, fill: { color: ACCENT } });
-    (strategy.recommendations || []).slice(0, 4).forEach((r, i) => {
+    (strategy.recommendations || []).slice(0, 4).forEach((raw, i) => {
+      const r = toStr(raw);
       const y = 2.1 + i * 1.05;
       fin.addShape(pptx.ShapeType.rect, { x: 7, y: y + 0.03, w: 0.08, h: 0.08, fill: { color: ACCENT } });
       fin.addText(truncate(r, 240), { x: 7.3, y, w: 4.9, h: 0.95, fontSize: 9, color: TEXT_DARK, fontFace: BF, lineSpacingMultiple: 1.3, valign: "top", wrap: true });
