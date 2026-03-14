@@ -15,11 +15,6 @@ function ensureHex(color: string): string {
   return "1A1A2E";
 }
 
-function truncate(text: string, max: number): string {
-  if (!text) return "";
-  return text.length > max ? text.slice(0, max - 3) + "..." : text;
-}
-
 /** Safely coerce any value to string — LLM may return objects instead of strings */
 function toStr(val: unknown): string {
   if (typeof val === "string") return val;
@@ -34,6 +29,19 @@ function toStr(val: unknown): string {
     return JSON.stringify(val);
   }
   return val == null ? "" : String(val);
+}
+
+/** Truncate text to max length, safely handling non-string inputs */
+function truncate(text: unknown, max: number): string {
+  const s = toStr(text);
+  if (!s) return "";
+  return s.length > max ? s.slice(0, max - 3) + "..." : s;
+}
+
+/** Safely coerce array items to strings — handles LLM returning mixed types */
+function safeArr(arr: unknown): unknown[] {
+  if (Array.isArray(arr)) return arr;
+  return [];
 }
 
 // ─── Color helpers ───
@@ -195,9 +203,10 @@ export async function generatePptx(strategy: MarketingStrategy): Promise<ToolRes
     // ╔══════════════════════════════════════════════════════════════╗
     // ║  COMPETITORS                                                ║
     // ╚══════════════════════════════════════════════════════════════╝
-    addDivider("Análisis de la\nCompetencia", `${strategy.competitors.length} competidores identificados`);
+    const competitors = safeArr(strategy.competitors) as any[];
+    addDivider("Análisis de la\nCompetencia", `${competitors.length} competidores identificados`);
 
-    for (const [idx, comp] of strategy.competitors.slice(0, 5).entries()) {
+    for (const [idx, comp] of competitors.slice(0, 5).entries()) {
       // ── Competitor Analysis Slide ──
       const cs = addSlide();
       cs.background = { color: WHITE };
@@ -208,10 +217,10 @@ export async function generatePptx(strategy: MarketingStrategy): Promise<ToolRes
         try { cs.addImage({ data: logo, x: 11.5, y: 0.35, w: 0.8, h: 0.8 }); } catch {}
       }
 
-      cs.addText(comp.name.toUpperCase(), { x: 0.8, y: 0.4, w: 10.5, h: 0.7, fontSize: 17, color: PRIMARY, bold: true, fontFace: HF, charSpacing: 5 });
+      cs.addText(toStr(comp.name).toUpperCase(), { x: 0.8, y: 0.4, w: 10.5, h: 0.7, fontSize: 17, color: PRIMARY, bold: true, fontFace: HF, charSpacing: 5 });
 
       if (comp.services?.length > 0) {
-        cs.addText(comp.services.slice(0, 4).map(s => toStr(s)).join("  ·  "), { x: 0.8, y: 1.05, w: 11.73, h: 0.3, fontSize: 9, color: TEXT_LIGHT, fontFace: BF, italic: true });
+        cs.addText(safeArr(comp.services).slice(0, 4).map((s: any) => toStr(s)).join("  ·  "), { x: 0.8, y: 1.05, w: 11.73, h: 0.3, fontSize: 9, color: TEXT_LIGHT, fontFace: BF, italic: true });
       }
       cs.addShape(pptx.ShapeType.rect, { x: 0.8, y: 1.45, w: 11.73, h: 0.008, fill: { color: LIGHT_GRAY } });
 
@@ -223,12 +232,12 @@ export async function generatePptx(strategy: MarketingStrategy): Promise<ToolRes
       // Fortalezas (left)
       cs.addShape(pptx.ShapeType.rect, { x: 0.8, y: 4.4, w: 5.9, h: 2.3, fill: { color: STRENGTH_BG }, rectRadius: 0.05 });
       cs.addText("Fortalezas:", { x: 1, y: 4.5, w: 5.5, h: 0.3, fontSize: 10, color: STRENGTH_GREEN, bold: true, fontFace: HF });
-      cs.addText(comp.strengths.slice(0, 3).map((s) => `•  ${truncate(toStr(s), 140)}`).join("\n"), { x: 1, y: 4.85, w: 5.5, h: 1.7, fontSize: 9, color: TEXT_DARK, fontFace: BF, lineSpacingMultiple: 1.35, valign: "top", wrap: true });
+      cs.addText(safeArr(comp.strengths).slice(0, 3).map((s) => `•  ${truncate(toStr(s), 140)}`).join("\n"), { x: 1, y: 4.85, w: 5.5, h: 1.7, fontSize: 9, color: TEXT_DARK, fontFace: BF, lineSpacingMultiple: 1.35, valign: "top", wrap: true });
 
       // Oportunidad (right)
       cs.addShape(pptx.ShapeType.rect, { x: 7, y: 4.4, w: 5.53, h: 2.3, fill: { color: ACCENT_LIGHT }, rectRadius: 0.05 });
       cs.addText(`Oportunidad para ${strategy.companyName}:`, { x: 7.2, y: 4.5, w: 5.13, h: 0.3, fontSize: 10, color: ACCENT, bold: true, fontFace: HF });
-      cs.addText((comp.opportunitiesForUs || []).slice(0, 2).map((o) => `•  ${truncate(toStr(o), 180)}`).join("\n"), { x: 7.2, y: 4.85, w: 5.13, h: 1.7, fontSize: 9, color: TEXT_DARK, fontFace: BF, lineSpacingMultiple: 1.35, valign: "top", wrap: true });
+      cs.addText(safeArr(comp.opportunitiesForUs).slice(0, 2).map((o) => `•  ${truncate(toStr(o), 180)}`).join("\n"), { x: 7.2, y: 4.85, w: 5.13, h: 1.7, fontSize: 9, color: TEXT_DARK, fontFace: BF, lineSpacingMultiple: 1.35, valign: "top", wrap: true });
 
       // Website link
       if (comp.website) {
@@ -244,25 +253,25 @@ export async function generatePptx(strategy: MarketingStrategy): Promise<ToolRes
       const seoData = comp.seoAnalysis;
       if (seoData) {
         seo.addText("Palabras clave principales", { x: 0.8, y: 1.4, w: 6, h: 0.4, fontSize: 12, color: PRIMARY, bold: true, fontFace: HF });
-        (seoData.topKeywords || []).slice(0, 10).forEach((kw: string, ki: number) => {
+        safeArr(seoData.topKeywords).slice(0, 10).forEach((kw: unknown, ki: number) => {
           const y = 1.95 + ki * 0.36;
           if (ki % 2 === 0) seo.addShape(pptx.ShapeType.rect, { x: 0.8, y: y - 0.02, w: 6, h: 0.34, fill: { color: SOFT_BG } });
           seo.addText(`${ki + 1}.`, { x: 0.9, y, w: 0.5, h: 0.3, fontSize: 9, color: TEXT_LIGHT, fontFace: BF });
-          seo.addText(kw, { x: 1.4, y, w: 5.3, h: 0.3, fontSize: 9, color: TEXT_DARK, fontFace: BF });
+          seo.addText(toStr(kw), { x: 1.4, y, w: 5.3, h: 0.3, fontSize: 9, color: TEXT_DARK, fontFace: BF });
         });
 
         // Traffic card
         seo.addShape(pptx.ShapeType.rect, { x: 7.5, y: 1.4, w: 4.83, h: 1.6, fill: { color: PRIMARY_LIGHT }, rectRadius: 0.08 });
         seo.addShape(pptx.ShapeType.rect, { x: 7.5, y: 1.4, w: 0.06, h: 1.6, fill: { color: PRIMARY } });
         seo.addText("Tráfico estimado", { x: 7.8, y: 1.55, w: 4.3, h: 0.3, fontSize: 9, color: TEXT_LIGHT, fontFace: BF });
-        seo.addText(seoData.estimatedTraffic || "N/A", { x: 7.8, y: 1.9, w: 4.3, h: 0.8, fontSize: 24, color: PRIMARY, bold: true, fontFace: HF });
+        seo.addText(toStr(seoData.estimatedTraffic) || "N/A", { x: 7.8, y: 1.9, w: 4.3, h: 0.8, fontSize: 24, color: PRIMARY, bold: true, fontFace: HF });
       }
 
       // Weaknesses
       if (comp.weaknesses?.length > 0) {
         seo.addShape(pptx.ShapeType.rect, { x: 7.5, y: 3.4, w: 4.83, h: 3.2, fill: { color: WEAKNESS_BG }, rectRadius: 0.05 });
         seo.addText("Debilidades:", { x: 7.7, y: 3.5, w: 4.43, h: 0.3, fontSize: 10, color: WEAKNESS_RED, bold: true, fontFace: HF });
-        seo.addText(comp.weaknesses.slice(0, 3).map((w) => `•  ${truncate(toStr(w), 140)}`).join("\n"), { x: 7.7, y: 3.85, w: 4.43, h: 2.5, fontSize: 9, color: TEXT_DARK, fontFace: BF, lineSpacingMultiple: 1.35, valign: "top", wrap: true });
+        seo.addText(safeArr(comp.weaknesses).slice(0, 3).map((w) => `•  ${truncate(toStr(w), 140)}`).join("\n"), { x: 7.7, y: 3.85, w: 4.43, h: 2.5, fontSize: 9, color: TEXT_DARK, fontFace: BF, lineSpacingMultiple: 1.35, valign: "top", wrap: true });
       }
 
       if (comp.website) {
@@ -288,22 +297,22 @@ export async function generatePptx(strategy: MarketingStrategy): Promise<ToolRes
     // ╚══════════════════════════════════════════════════════════════╝
     addDivider("Palabras Clave\n(SEO Keywords)", "Investigación de keywords estratégicas");
 
-    const kwGroups = strategy.keywordGroups.slice(0, 5);
+    const kwGroups = safeArr(strategy.keywordGroups).slice(0, 5) as any[];
     for (let gi = 0; gi < kwGroups.length; gi += 2) {
       const ks = addSlide();
       ks.background = { color: WHITE };
       addTitle(ks, "Palabras Clave (SEO Keywords)");
 
-      kwGroups.slice(gi, gi + 2).forEach((group, li) => {
+      kwGroups.slice(gi, gi + 2).forEach((group: any, li: number) => {
         const cx = li === 0 ? 0.8 : 7;
         const cw = 5.8;
-        ks.addText(group.category.toUpperCase(), { x: cx, y: 1.4, w: cw, h: 0.45, fontSize: 11, color: PRIMARY, bold: true, fontFace: HF, charSpacing: 3 });
+        ks.addText(toStr(group?.category).toUpperCase(), { x: cx, y: 1.4, w: cw, h: 0.45, fontSize: 11, color: PRIMARY, bold: true, fontFace: HF, charSpacing: 3 });
         ks.addShape(pptx.ShapeType.rect, { x: cx, y: 1.85, w: 2, h: 0.012, fill: { color: ACCENT } });
 
-        group.keywords.slice(0, 10).forEach((kw, ki) => {
+        safeArr(group?.keywords).slice(0, 10).forEach((kw: any, ki: number) => {
           const y = 2.1 + ki * 0.4;
           if (ki % 2 === 0) ks.addShape(pptx.ShapeType.rect, { x: cx, y: y - 0.02, w: cw, h: 0.36, fill: { color: SOFT_BG } });
-          ks.addText(kw.term, { x: cx + 0.15, y, w: cw - 0.3, h: 0.32, fontSize: 9, color: TEXT_DARK, fontFace: BF, valign: "middle" });
+          ks.addText(toStr(kw?.term || kw), { x: cx + 0.15, y, w: cw - 0.3, h: 0.32, fontSize: 9, color: TEXT_DARK, fontFace: BF, valign: "middle" });
         });
       });
       addFooter(ks);
@@ -317,7 +326,7 @@ export async function generatePptx(strategy: MarketingStrategy): Promise<ToolRes
     concl.background = { color: WHITE };
     addTitle(concl, "Conclusiones Estratégicas");
 
-    strategy.strategicConclusions.slice(0, 4).forEach((raw, i) => {
+    safeArr(strategy.strategicConclusions).slice(0, 4).forEach((raw, i) => {
       const conclusion = toStr(raw);
       const y = 1.5 + i * 1.35;
       const colonIdx = conclusion.indexOf(":");
@@ -340,7 +349,7 @@ export async function generatePptx(strategy: MarketingStrategy): Promise<ToolRes
     diff.background = { color: WHITE };
     addTitle(diff, `¿Dónde se puede diferenciar ${strategy.companyName}?`);
 
-    strategy.differentiationProposals.slice(0, 4).forEach((raw, i) => {
+    safeArr(strategy.differentiationProposals).slice(0, 4).forEach((raw, i) => {
       const proposal = toStr(raw);
       const y = 1.5 + i * 1.35;
       const colonIdx = proposal.indexOf(":");
@@ -364,20 +373,21 @@ export async function generatePptx(strategy: MarketingStrategy): Promise<ToolRes
     brand.addText("SERVICIOS", { x: 0.8, y: 1.4, w: 6, h: 0.35, fontSize: 10, color: PRIMARY, bold: true, fontFace: HF, charSpacing: 3 });
     brand.addShape(pptx.ShapeType.rect, { x: 0.8, y: 1.75, w: 1.5, h: 0.008, fill: { color: ACCENT } });
 
-    strategy.services.slice(0, 6).forEach((svc, i) => {
+    safeArr(strategy.services).slice(0, 6).forEach((svc: any, i: number) => {
       const y = 1.95 + i * 0.65;
       brand.addShape(pptx.ShapeType.rect, { x: 0.8, y: y + 0.05, w: 0.1, h: 0.1, fill: { color: ACCENT } });
-      brand.addText(svc.name, { x: 1.1, y, w: 5.3, h: 0.25, fontSize: 10, color: TEXT_DARK, bold: true, fontFace: HF });
-      brand.addText(truncate(svc.description, 80), { x: 1.1, y: y + 0.25, w: 5.3, h: 0.3, fontSize: 8, color: TEXT_LIGHT, fontFace: BF });
+      brand.addText(toStr(svc?.name), { x: 1.1, y, w: 5.3, h: 0.25, fontSize: 10, color: TEXT_DARK, bold: true, fontFace: HF });
+      brand.addText(truncate(svc?.description, 80), { x: 1.1, y: y + 0.25, w: 5.3, h: 0.3, fontSize: 8, color: TEXT_LIGHT, fontFace: BF });
     });
 
     brand.addText("IDENTIDAD", { x: 7.2, y: 1.4, w: 5.5, h: 0.35, fontSize: 10, color: PRIMARY, bold: true, fontFace: HF, charSpacing: 3 });
     brand.addShape(pptx.ShapeType.rect, { x: 7.2, y: 1.75, w: 1.5, h: 0.008, fill: { color: ACCENT } });
 
+    const bd = strategy.brandDesign || {} as any;
     [
-      { l: "Personalidad", v: truncate(strategy.brandDesign.personality, 80) },
-      { l: "Valores", v: strategy.brandDesign.values.join(", ") },
-      { l: "Tipografía", v: `${strategy.brandDesign.identity.fonts.heading} / ${strategy.brandDesign.identity.fonts.body}` },
+      { l: "Personalidad", v: truncate(bd.personality, 80) },
+      { l: "Valores", v: safeArr(bd.values).map(toStr).join(", ") },
+      { l: "Tipografía", v: `${toStr(bd.identity?.fonts?.heading)} / ${toStr(bd.identity?.fonts?.body)}` },
     ].forEach((item, i) => {
       const y = 1.95 + i * 0.6;
       brand.addText(item.l, { x: 7.2, y, w: 2, h: 0.25, fontSize: 9, color: TEXT_LIGHT, fontFace: BF });
@@ -405,12 +415,13 @@ export async function generatePptx(strategy: MarketingStrategy): Promise<ToolRes
     csSlide.background = { color: WHITE };
     addTitle(csSlide, "Estrategia de Contenido");
 
+    const cs = strategy.contentStrategy || {} as any;
     const csRows: [string, string][] = [
-      ["A quién se dirige", strategy.contentStrategy.targetAudience.join("\n")],
-      ["Dolor", strategy.contentStrategy.painPoints.join("\n")],
-      ["Canales", strategy.contentStrategy.channels.join(", ")],
-      ["Zonas de Enfoque", strategy.contentStrategy.focusAreas.join("\n")],
-      ["Tono", strategy.contentStrategy.tone],
+      ["A quién se dirige", safeArr(cs.targetAudience).map(toStr).join("\n")],
+      ["Dolor", safeArr(cs.painPoints).map(toStr).join("\n")],
+      ["Canales", safeArr(cs.channels).map(toStr).join(", ")],
+      ["Zonas de Enfoque", safeArr(cs.focusAreas).map(toStr).join("\n")],
+      ["Tono", toStr(cs.tone)],
     ];
 
     csRows.forEach(([label, value], i) => {
@@ -433,28 +444,29 @@ export async function generatePptx(strategy: MarketingStrategy): Promise<ToolRes
     addTitle(pillS, "Pilares de Contenido");
 
     const pColors = [PRIMARY, ACCENT, SECONDARY, MEDIUM_GRAY];
-    const pCount = Math.min(strategy.contentPillars.length, 4);
+    const contentPillars = safeArr(strategy.contentPillars) as any[];
+    const pCount = Math.min(contentPillars.length, 4);
 
     if (pCount <= 3) {
       const pw = pCount === 2 ? 5.7 : 3.7;
-      strategy.contentPillars.slice(0, pCount).forEach((p, i) => {
+      contentPillars.slice(0, pCount).forEach((p, i) => {
         const x = 0.8 + i * (pw + 0.3);
         const pc = pColors[i];
-        pillS.addText(`${p.percentage}%`, { x, y: 1.4, w: pw, h: 1, fontSize: 36, color: pc, bold: true, fontFace: HF });
-        pillS.addText(p.name, { x, y: 2.4, w: pw, h: 0.4, fontSize: 11, color: PRIMARY, bold: true, fontFace: HF });
+        pillS.addText(`${toStr(p?.percentage)}%`, { x, y: 1.4, w: pw, h: 1, fontSize: 36, color: pc, bold: true, fontFace: HF });
+        pillS.addText(toStr(p?.name), { x, y: 2.4, w: pw, h: 0.4, fontSize: 11, color: PRIMARY, bold: true, fontFace: HF });
         pillS.addShape(pptx.ShapeType.rect, { x, y: 2.8, w: 1.5, h: 0.012, fill: { color: pc } });
         pillS.addText(truncate(p.description, 280), { x, y: 3, w: pw, h: 2, fontSize: 9, color: TEXT_DARK, fontFace: BF, lineSpacingMultiple: 1.4, valign: "top", wrap: true });
         if (p.topics?.length > 0) {
-          pillS.addText(p.topics.slice(0, 4).map((t) => `•  ${t}`).join("\n"), { x, y: 5.1, w: pw, h: 1.5, fontSize: 8, color: TEXT_LIGHT, fontFace: BF, lineSpacingMultiple: 1.3 });
+          pillS.addText(safeArr(p.topics).slice(0, 4).map((t) => `•  ${toStr(t)}`).join("\n"), { x, y: 5.1, w: pw, h: 1.5, fontSize: 8, color: TEXT_LIGHT, fontFace: BF, lineSpacingMultiple: 1.3 });
         }
       });
     } else {
-      strategy.contentPillars.slice(0, 4).forEach((p, i) => {
+      contentPillars.slice(0, 4).forEach((p, i) => {
         const col = i % 2, row = Math.floor(i / 2);
         const x = col === 0 ? 0.8 : 7, y = row === 0 ? 1.4 : 4.3;
         const pc = pColors[i];
-        pillS.addText(`${p.percentage}%`, { x, y, w: 1.5, h: 0.65, fontSize: 28, color: pc, bold: true, fontFace: HF });
-        pillS.addText(p.name, { x: x + 1.5, y, w: 4, h: 0.3, fontSize: 11, color: PRIMARY, bold: true, fontFace: HF });
+        pillS.addText(`${toStr(p?.percentage)}%`, { x, y, w: 1.5, h: 0.65, fontSize: 28, color: pc, bold: true, fontFace: HF });
+        pillS.addText(toStr(p?.name), { x: x + 1.5, y, w: 4, h: 0.3, fontSize: 11, color: PRIMARY, bold: true, fontFace: HF });
         pillS.addShape(pptx.ShapeType.rect, { x: x + 1.5, y: y + 0.35, w: 1.5, h: 0.01, fill: { color: pc } });
         pillS.addText(truncate(p.description, 200), { x: x + 1.5, y: y + 0.5, w: 4, h: 2, fontSize: 9, color: TEXT_DARK, fontFace: BF, lineSpacingMultiple: 1.3, valign: "top", wrap: true });
       });
@@ -478,14 +490,15 @@ export async function generatePptx(strategy: MarketingStrategy): Promise<ToolRes
         { text: "Pilar", options: { bold: true, color: WHITE, fill: { color: PRIMARY }, fontSize: 9, fontFace: HF } },
       ],
     ];
-    strategy.contentGrid.slice(0, 10).forEach((item, idx) => {
+    safeArr(strategy.contentGrid).slice(0, 10).forEach((rawItem: any, idx: number) => {
+      const item = rawItem || {};
       const bg = idx % 2 === 0 ? WHITE : SOFT_BG;
       gridRows.push([
-        { text: item.day, options: { fontSize: 9, color: PRIMARY, bold: true, fill: { color: bg }, align: "center", fontFace: BF } },
-        { text: item.platform, options: { fontSize: 9, color: TEXT_DARK, fill: { color: bg }, fontFace: BF } },
-        { text: item.contentType, options: { fontSize: 9, color: TEXT_DARK, fill: { color: bg }, fontFace: BF } },
+        { text: toStr(item.day), options: { fontSize: 9, color: PRIMARY, bold: true, fill: { color: bg }, align: "center", fontFace: BF } },
+        { text: toStr(item.platform), options: { fontSize: 9, color: TEXT_DARK, fill: { color: bg }, fontFace: BF } },
+        { text: toStr(item.contentType), options: { fontSize: 9, color: TEXT_DARK, fill: { color: bg }, fontFace: BF } },
         { text: truncate(item.topic, 55), options: { fontSize: 9, color: TEXT_DARK, fill: { color: bg }, fontFace: BF } },
-        { text: item.pillar, options: { fontSize: 8, color: TEXT_LIGHT, fill: { color: bg }, fontFace: BF } },
+        { text: toStr(item.pillar), options: { fontSize: 8, color: TEXT_LIGHT, fill: { color: bg }, fontFace: BF } },
       ]);
     });
     grid.addTable(gridRows, { x: 0.5, y: 1.3, w: 12.33, h: 5.2, fontSize: 9, fontFace: BF, border: { type: "solid", pt: 0.3, color: LIGHT_GRAY }, colW: [1.3, 2, 1.8, 4.5, 2.73], autoPage: false });
@@ -499,10 +512,11 @@ export async function generatePptx(strategy: MarketingStrategy): Promise<ToolRes
     kpi.background = { color: WHITE };
     addTitle(kpi, "KPIs", "Indicadores Clave");
 
-    const kpisByCategory: Record<string, typeof strategy.kpis> = {};
-    for (const k of strategy.kpis.slice(0, 12)) {
-      if (!kpisByCategory[k.category]) kpisByCategory[k.category] = [];
-      kpisByCategory[k.category].push(k);
+    const kpisByCategory: Record<string, any[]> = {};
+    for (const k of safeArr(strategy.kpis).slice(0, 12) as any[]) {
+      const cat = toStr(k?.category) || "General";
+      if (!kpisByCategory[cat]) kpisByCategory[cat] = [];
+      kpisByCategory[cat].push(k);
     }
 
     const catColors = [PRIMARY, ACCENT, SECONDARY, darkenHex(ACCENT, 0.2)];
@@ -512,9 +526,9 @@ export async function generatePptx(strategy: MarketingStrategy): Promise<ToolRes
       kpi.addShape(pptx.ShapeType.rect, { x: 0.8, y: yK, w: 0.08, h: 0.3, fill: { color: cc } });
       kpi.addText(`${cat}:`, { x: 1.1, y: yK, w: 11.43, h: 0.3, fontSize: 11, color: cc, bold: true, fontFace: HF });
       yK += 0.4;
-      kpis.slice(0, 3).forEach((k) => {
-        kpi.addText(`${k.metric}: `, { x: 1.1, y: yK, w: 11.43, h: 0.25, fontSize: 9, color: TEXT_DARK, bold: true, fontFace: BF });
-        kpi.addText(truncate(k.description, 130) + (k.target ? `  →  Meta: ${k.target}` : ""), { x: 1.1, y: yK + 0.25, w: 11.43, h: 0.25, fontSize: 8, color: TEXT_LIGHT, fontFace: BF });
+      kpis.slice(0, 3).forEach((k: any) => {
+        kpi.addText(`${toStr(k?.metric)}: `, { x: 1.1, y: yK, w: 11.43, h: 0.25, fontSize: 9, color: TEXT_DARK, bold: true, fontFace: BF });
+        kpi.addText(truncate(k?.description, 130) + (k?.target ? `  →  Meta: ${toStr(k.target)}` : ""), { x: 1.1, y: yK + 0.25, w: 11.43, h: 0.25, fontSize: 8, color: TEXT_LIGHT, fontFace: BF });
         yK += 0.55;
       });
       yK += 0.12;
@@ -529,14 +543,14 @@ export async function generatePptx(strategy: MarketingStrategy): Promise<ToolRes
     time.background = { color: WHITE };
     addTitle(time, "Cronograma de Implementación");
 
-    strategy.implementationTimeline.slice(0, 4).forEach((phase, i) => {
+    safeArr(strategy.implementationTimeline).slice(0, 4).forEach((phase: any, i: number) => {
       const y = 1.4 + i * 1.4;
       const pc = [PRIMARY, ACCENT, SECONDARY, MEDIUM_GRAY][i] || PRIMARY;
       time.addShape(pptx.ShapeType.rect, { x: 0.8, y, w: 0.06, h: 1.2, fill: { color: pc } });
-      time.addText(phase.phase, { x: 1.1, y, w: 8, h: 0.3, fontSize: 11, color: PRIMARY, bold: true, fontFace: HF });
+      time.addText(toStr(phase?.phase), { x: 1.1, y, w: 8, h: 0.3, fontSize: 11, color: PRIMARY, bold: true, fontFace: HF });
       time.addShape(pptx.ShapeType.rect, { x: 10, y, w: 2.2, h: 0.3, fill: { color: pc }, rectRadius: 0.15 });
-      time.addText(phase.weeks, { x: 10, y, w: 2.2, h: 0.3, fontSize: 8, color: WHITE, bold: true, fontFace: BF, align: "center", valign: "middle" });
-      time.addText(phase.tasks.slice(0, 3).map((t) => `•  ${truncate(t, 100)}`).join("\n"), { x: 1.1, y: y + 0.38, w: 11, h: 0.85, fontSize: 9, color: TEXT_DARK, fontFace: BF, lineSpacingMultiple: 1.3 });
+      time.addText(toStr(phase?.weeks), { x: 10, y, w: 2.2, h: 0.3, fontSize: 8, color: WHITE, bold: true, fontFace: BF, align: "center", valign: "middle" });
+      time.addText(safeArr(phase?.tasks).slice(0, 3).map((t: any) => `•  ${truncate(t, 100)}`).join("\n"), { x: 1.1, y: y + 0.38, w: 11, h: 0.85, fontSize: 9, color: TEXT_DARK, fontFace: BF, lineSpacingMultiple: 1.3 });
     });
     addFooter(time);
 
